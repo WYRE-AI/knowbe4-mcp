@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- `/health` is now a shallow, unauthenticated liveness probe returning `200 {"status":"ok"}` — it no longer calls `getCredentials()`. In gateway mode (`AUTH_MODE=gateway`) credentials only arrive per-request via the `X-KnowBe4-API-Key` header, so the previous credential-gated `/health` always returned `503`, causing the Azure liveness probe to fail and SIGTERM-kill the container (crash loop). Added `/healthz` as an alias.
+
 ### Added
 - Lazy-loading meta-tools mode (`LAZY_LOADING=true` env var) as an alternative to decision-tree navigation
   - `knowbe4_list_categories`: Discover available tool categories with descriptions and counts
