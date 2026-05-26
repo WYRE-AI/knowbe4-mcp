@@ -68,7 +68,7 @@ jobs:
             exit 1
           fi
           echo "version=$RELEASE_VERSION" >> "$GITHUB_OUTPUT"
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@v4
         with: { registry: ghcr.io, username: '${{ github.actor }}', password: '${{ secrets.GITHUB_TOKEN }}' }
       - uses: docker/build-push-action@v6
         with:
