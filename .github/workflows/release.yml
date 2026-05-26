@@ -27,7 +27,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with: { node-version: 22, cache: npm }
       - name: Capture pre-release version
         run: |
