@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- HTTP transport now builds a fresh `Server` + `StreamableHTTPServerTransport` per `/mcp` request (stateless mode, `sessionIdGenerator: undefined`) instead of sharing one stateful transport for the whole process. The shared stateful transport (created with `sessionIdGenerator: () => randomUUID()`) only accepted one `initialize`, so behind the multi-user gateway only the first client since container start received tools — every subsequent client got `-32600 "Server already initialized"` and saw zero tools until a restart. Each request is now independent, so multiple clients work simultaneously. Handler registration was extracted into a `createFreshServer()` factory; stdio mode keeps its single shared server. Per-request server/transport are disposed on response close, and non-`POST` `/mcp` requests now return `405`.
+- Hardened the per-request HTTP handler: the whole body is wrapped so any failure returns `500 {"jsonrpc":"2.0","error":{"code":-32603,"message":"Internal error"},"id":null}` and is never rethrown, preventing a single bad request from escaping as an `unhandledRejection` that could crash the container.
 - `/health` is now a shallow, unauthenticated liveness probe returning `200 {"status":"ok"}` — it no longer calls `getCredentials()`. In gateway mode (`AUTH_MODE=gateway`) credentials only arrive per-request via the `X-KnowBe4-API-Key` header, so the previous credential-gated `/health` always returned `503`, causing the Azure liveness probe to fail and SIGTERM-kill the container (crash loop). Added `/healthz` as an alias.
 
 ### Added
