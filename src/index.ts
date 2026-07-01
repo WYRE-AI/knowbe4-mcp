@@ -27,7 +27,6 @@
  */
 
 import { createServer as createHttpServer, IncomingMessage, ServerResponse } from "node:http";
-import { randomUUID } from "node:crypto";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
@@ -35,7 +34,7 @@ import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
-import type { Tool } from "@modelcontextprotocol/sdk/types.js";
+import type { Tool, CallToolRequest } from "@modelcontextprotocol/sdk/types.js";
 import { getDomainHandler, getAvailableDomains } from "./domains/index.js";
 import { isDomainName, KNOWBE4_REGIONS, type DomainName } from "./utils/types.js";
 import { getCredentials, credentialStore } from "./utils/client.js";
@@ -44,21 +43,6 @@ import { setServerRef } from "./utils/server-ref.js";
 import { TOOL_CATEGORIES, findDomainForTool, routeIntent } from "./utils/categories.js";
 
 // Navigation state removed - all tools are always available for direct-install compatibility
-
-// Create the MCP server
-const server = new Server(
-  {
-    name: "mcp-server-knowbe4",
-    version: "1.0.0",
-  },
-  {
-    capabilities: {
-      tools: {},
-    },
-  }
-);
-
-setServerRef(server);
 
 /**
  * Navigation tool - stateless discovery helper that describes available tools for a domain.
@@ -225,17 +209,17 @@ async function getAllDomainTools(): Promise<Tool[]> {
 }
 
 // Handle ListTools requests - always returns ALL tools
-server.setRequestHandler(ListToolsRequestSchema, async () => {
+const handleListTools = async () => {
   if (isLazyLoadingEnabled()) {
     return { tools: metaTools };
   }
 
   const domainTools = await getAllDomainTools();
   return { tools: [navigateTool, backTool, statusTool, ...domainTools] };
-});
+};
 
 // Handle CallTool requests
-server.setRequestHandler(CallToolRequestSchema, async (request) => {
+const handleCallTool = async (request: CallToolRequest) => {
   const { name, arguments: args } = request.params;
   logger.info("Tool call received", { tool: name, arguments: args });
 
@@ -506,12 +490,59 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       isError: true,
     };
   }
-});
+};
+
+/**
+ * Register the ListTools and CallTool handlers on a Server instance.
+ * Called once per server — once for the shared stdio server, and once per
+ * HTTP request for the fresh per-request servers.
+ */
+function registerHandlers(server: Server): void {
+  server.setRequestHandler(ListToolsRequestSchema, handleListTools);
+  server.setRequestHandler(CallToolRequestSchema, handleCallTool);
+}
+
+/**
+ * Build a fresh MCP Server with all request handlers registered.
+ *
+ * A NEW Server (paired with a NEW StreamableHTTPServerTransport) is created for
+ * every HTTP request so the server is stateless: each request can `initialize`
+ * independently and multiple clients work simultaneously. Reusing a single
+ * Server + stateful transport causes the second client to receive
+ * -32600 "Server already initialized" and therefore see zero tools — behind the
+ * multi-user gateway that means only the first client since container start gets
+ * any tools. stdio mode is inherently single-client and reuses one such server.
+ */
+function createFreshServer(): Server {
+  const server = new Server(
+    {
+      name: "mcp-server-knowbe4",
+      version: "1.0.0",
+    },
+    {
+      capabilities: {
+        tools: {},
+      },
+    }
+  );
+
+  server.onerror = (error) => {
+    logger.error("MCP server error", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  };
+
+  registerHandlers(server);
+  return server;
+}
 
 /**
  * Start the server with stdio transport (default)
  */
 async function startStdioTransport(): Promise<void> {
+  // stdio is inherently single-client, so a single shared server is fine.
+  const server = createFreshServer();
+  setServerRef(server);
   const transport = new StdioServerTransport();
   await server.connect(transport);
   const mode = isLazyLoadingEnabled() ? "lazy loading" : "flattened";
@@ -528,10 +559,66 @@ async function startHttpTransport(): Promise<void> {
   const host = process.env.MCP_HTTP_HOST || "0.0.0.0";
   const isGatewayMode = process.env.AUTH_MODE === "gateway";
 
-  const transport = new StreamableHTTPServerTransport({
-    sessionIdGenerator: () => randomUUID(),
-    enableJsonResponse: true,
-  });
+  /**
+   * Handle a single /mcp POST with a FRESH Server + Transport (stateless).
+   *
+   * The entire body is guarded: on any error we reply 500 with a JSON-RPC
+   * error and NEVER rethrow. This keeps a single bad request from escaping as
+   * an unhandledRejection (which, with a process-level handler, could exit the
+   * container). The fresh server + transport are built here — and, in gateway
+   * mode, inside credentialStore.run(...) — so per-request credentials apply to
+   * every downstream getCredentials()/apiRequest() call, including async
+   * continuations of the connect/handleRequest promise chain.
+   */
+  const handleMcpRequest = (req: IncomingMessage, res: ServerResponse): void => {
+    const respondInternalError = () => {
+      if (!res.headersSent) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            error: { code: -32603, message: "Internal error" },
+            id: null,
+          })
+        );
+      }
+    };
+
+    try {
+      const server = createFreshServer();
+      // Best-effort ref for elicitation helpers (stateless HTTP can't stream
+      // server->client requests, so these degrade gracefully to null).
+      setServerRef(server);
+
+      const transport = new StreamableHTTPServerTransport({
+        sessionIdGenerator: undefined, // stateless: no session, allows every client to initialize
+        enableJsonResponse: true,
+      });
+
+      // Dispose the per-request server + transport when the response closes.
+      res.on("close", () => {
+        void transport.close();
+        void server.close();
+      });
+
+      server
+        .connect(transport)
+        .then(() => transport.handleRequest(req, res))
+        .catch((error) => {
+          logger.error("MCP request handling failed", {
+            error: error instanceof Error ? error.message : String(error),
+            stack: error instanceof Error ? error.stack : undefined,
+          });
+          respondInternalError();
+        });
+    } catch (error) {
+      logger.error("MCP request setup failed", {
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+      });
+      respondInternalError();
+    }
+  };
 
   const httpServer = createHttpServer((req: IncomingMessage, res: ServerResponse) => {
     const url = new URL(req.url || "/", `http://${req.headers.host || "localhost"}`);
@@ -549,6 +636,19 @@ async function startHttpTransport(): Promise<void> {
 
     // MCP endpoint
     if (url.pathname === "/mcp") {
+      // Stateless mode only supports POST (no GET SSE stream).
+      if (req.method !== "POST") {
+        res.writeHead(405, { "Content-Type": "application/json", Allow: "POST" });
+        res.end(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            error: { code: -32000, message: "Method not allowed" },
+            id: null,
+          })
+        );
+        return;
+      }
+
       // Gateway mode: extract credentials from headers
       if (isGatewayMode) {
         const apiKey = req.headers["x-knowbe4-api-key"] as string | undefined;
@@ -572,15 +672,15 @@ async function startHttpTransport(): Promise<void> {
         const regionKey = (region || "us").toLowerCase();
         const baseUrl = KNOWBE4_REGIONS[regionKey] || KNOWBE4_REGIONS.us;
 
-        // Run the request handler within a credential-scoped context
-        // so all downstream getCredentials()/apiRequest() calls use these creds
+        // Build the fresh per-request server + transport INSIDE the credential
+        // scope so all downstream getCredentials()/apiRequest() calls use these creds.
         credentialStore.run({ apiKey, baseUrl }, () => {
-          transport.handleRequest(req, res);
+          handleMcpRequest(req, res);
         });
         return;
       }
 
-      transport.handleRequest(req, res);
+      handleMcpRequest(req, res);
       return;
     }
 
@@ -588,8 +688,6 @@ async function startHttpTransport(): Promise<void> {
     res.writeHead(404, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ error: "Not found", endpoints: ["/mcp", "/health", "/healthz"] }));
   });
-
-  await server.connect(transport);
 
   await new Promise<void>((resolve) => {
     httpServer.listen(port, host, () => {
@@ -608,7 +706,6 @@ async function startHttpTransport(): Promise<void> {
     await new Promise<void>((resolve, reject) => {
       httpServer.close((err) => (err ? reject(err) : resolve()));
     });
-    await server.close();
     process.exit(0);
   };
 
