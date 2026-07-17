@@ -83,6 +83,16 @@ Training campaign management
 ### Users
 User management and risk scoring
 
+## Interactive User Card (MCP Apps)
+
+`knowbe4_users_get` renders as an interactive card in MCP Apps hosts
+(Claude Desktop/web) showing the user's risk score, phish-prone percentage,
+risk-score trend, and profile details; plain-JSON behavior is unchanged in
+other hosts, and the card is read-only (no write round-trip). The card is
+neutral by default and brandable via `window.__BRAND__` injection or
+`MCP_BRAND_*` env vars (`MCP_BRAND_NAME`, `MCP_BRAND_LOGO_URL`,
+`MCP_BRAND_PRIMARY_COLOR`, `MCP_BRAND_ACCENT_COLOR`, `MCP_BRAND_BG`,
+`MCP_BRAND_TEXT`) — no rebuild needed.
 
 ## Development
 
