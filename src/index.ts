@@ -41,6 +41,7 @@ import { getCredentials, credentialStore } from "./utils/client.js";
 import { logger } from "./utils/logger.js";
 import { setServerRef } from "./utils/server-ref.js";
 import { TOOL_CATEGORIES, findDomainForTool, routeIntent } from "./utils/categories.js";
+import { registerResourceHandlers } from "./resources.js";
 
 // Navigation state removed - all tools are always available for direct-install compatibility
 
@@ -500,6 +501,7 @@ const handleCallTool = async (request: CallToolRequest) => {
 function registerHandlers(server: Server): void {
   server.setRequestHandler(ListToolsRequestSchema, handleListTools);
   server.setRequestHandler(CallToolRequestSchema, handleCallTool);
+  registerResourceHandlers(server);
 }
 
 /**
@@ -522,6 +524,7 @@ function createFreshServer(): Server {
     {
       capabilities: {
         tools: {},
+        resources: {},
       },
     }
   );

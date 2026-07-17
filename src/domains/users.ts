@@ -12,6 +12,7 @@ import type { DomainHandler, CallToolResult } from "../utils/types.js";
 import { apiRequest } from "../utils/client.js";
 import { logger } from "../utils/logger.js";
 import { elicitText, elicitSelection } from "../utils/elicitation.js";
+import { buildUserCard, USER_CARD_META } from "../card.builder.js";
 
 function getTools(): Tool[] {
   return [
@@ -46,6 +47,7 @@ function getTools(): Tool[] {
       name: "knowbe4_users_get",
       description:
         "Get detailed information about a specific KnowBe4 user by ID, including their risk score, phish-prone percentage, training status, and group memberships.",
+      _meta: USER_CARD_META,
       inputSchema: {
         type: "object" as const,
         properties: {
@@ -152,11 +154,28 @@ async function handleCall(
 
       logger.debug("API response: users.get", { userId });
 
+      // MCP Apps: attach the normalized card payload the ui:// user card
+      // renders from. Best-effort — any failure just means no UI surface,
+      // and the model-visible JSON is otherwise unchanged.
+      let payload: unknown = result;
+      try {
+        if (result && typeof result === "object" && !Array.isArray(result)) {
+          const card = await buildUserCard(result as Record<string, unknown>, (id) =>
+            apiRequest<unknown>(`/api/v1/users/${id}/risk_score_history`, {
+              params: { page: 1, per_page: 100 },
+            })
+          );
+          if (card) payload = { ...(result as Record<string, unknown>), _card: card };
+        }
+      } catch {
+        payload = result;
+      }
+
       return {
         content: [
           {
             type: "text",
-            text: JSON.stringify(result, null, 2),
+            text: JSON.stringify(payload, null, 2),
           },
         ],
       };
