@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { getCredentials } from "../utils/client.js";
+import { apiRequest, getCredentials } from "../utils/client.js";
 
 describe("getCredentials", () => {
   const originalEnv = process.env;
@@ -84,5 +84,64 @@ describe("getCredentials", () => {
     process.env.KNOWBE4_REGION = "EU";
     const creds = getCredentials();
     expect(creds!.baseUrl).toBe("https://eu.api.knowbe4.com");
+  });
+});
+
+describe("apiRequest URL construction", () => {
+  const originalEnv = process.env;
+  let fetchMock: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    process.env = { ...originalEnv };
+    process.env.KNOWBE4_API_KEY = "test-key";
+    fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      text: async () => "{}",
+    });
+    vi.stubGlobal("fetch", fetchMock);
+  });
+
+  afterEach(() => {
+    process.env = originalEnv;
+    vi.unstubAllGlobals();
+  });
+
+  /** The URL the stubbed fetch was handed on its most recent call. */
+  const requestedUrl = () => fetchMock.mock.calls[0][0] as string;
+
+  it("should append the path to a bare-origin base URL", async () => {
+    process.env.KNOWBE4_BASE_URL = "https://us.api.knowbe4.com";
+    await apiRequest("/api/v1/account");
+    expect(requestedUrl()).toBe("https://us.api.knowbe4.com/api/v1/account");
+  });
+
+  it("should preserve a base URL path prefix with a trailing slash", async () => {
+    process.env.KNOWBE4_BASE_URL = "https://proxy.corp.example/knowbe4/";
+    await apiRequest("/api/v1/account");
+    expect(requestedUrl()).toBe("https://proxy.corp.example/knowbe4/api/v1/account");
+  });
+
+  it("should preserve a base URL path prefix without a trailing slash", async () => {
+    process.env.KNOWBE4_BASE_URL = "https://proxy.corp.example/knowbe4";
+    await apiRequest("/api/v1/phishing/security_tests");
+    expect(requestedUrl()).toBe(
+      "https://proxy.corp.example/knowbe4/api/v1/phishing/security_tests"
+    );
+  });
+
+  it("should collapse redundant slashes on either side of the join", async () => {
+    process.env.KNOWBE4_BASE_URL = "https://proxy.corp.example/knowbe4//";
+    await apiRequest("//api/v1/users");
+    expect(requestedUrl()).toBe("https://proxy.corp.example/knowbe4/api/v1/users");
+  });
+
+  it("should append query params after the joined path", async () => {
+    process.env.KNOWBE4_BASE_URL = "https://proxy.corp.example/knowbe4/";
+    await apiRequest("/api/v1/users", { params: { page: 2, per_page: 50 } });
+    expect(requestedUrl()).toBe(
+      "https://proxy.corp.example/knowbe4/api/v1/users?page=2&per_page=50"
+    );
   });
 });
