@@ -118,3 +118,5 @@ Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) if pres
 ## License
 
 Licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE) for details.
+
+<!-- verification: confirm non-workflow PRs need no review -->
