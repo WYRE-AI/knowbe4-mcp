@@ -1,6 +1,4 @@
-# Default owner for all files — auto-assigned as reviewer on PRs
-* @asachs01 @wyre-technology/engineering
-
-# Workflows require explicit review — prevents supply-chain attacks via
-# PR-supplied CI config
+# Workflow files require an explicit code-owner review — this is the one path
+# where a malicious PR could exfiltrate secrets or tamper with the release
+# pipeline, so it stays gated even though other paths do not require review.
 /.github/workflows/ @asachs01
