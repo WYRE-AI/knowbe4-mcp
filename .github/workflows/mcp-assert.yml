@@ -12,3 +12,4 @@ jobs:
     with:
       entry: dist/index.js
       canary-tool: knowbe4_account_get
+# (verification: confirm workflow gate still requires review)
