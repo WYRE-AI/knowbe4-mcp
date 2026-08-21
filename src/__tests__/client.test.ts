@@ -113,35 +113,35 @@ describe("apiRequest URL construction", () => {
 
   it("should append the path to a bare-origin base URL", async () => {
     process.env.KNOWBE4_BASE_URL = "https://us.api.knowbe4.com";
-    await apiRequest("/api/v1/account");
-    expect(requestedUrl()).toBe("https://us.api.knowbe4.com/api/v1/account");
+    await apiRequest("/v1/account");
+    expect(requestedUrl()).toBe("https://us.api.knowbe4.com/v1/account");
   });
 
   it("should preserve a base URL path prefix with a trailing slash", async () => {
     process.env.KNOWBE4_BASE_URL = "https://proxy.corp.example/knowbe4/";
-    await apiRequest("/api/v1/account");
-    expect(requestedUrl()).toBe("https://proxy.corp.example/knowbe4/api/v1/account");
+    await apiRequest("/v1/account");
+    expect(requestedUrl()).toBe("https://proxy.corp.example/knowbe4/v1/account");
   });
 
   it("should preserve a base URL path prefix without a trailing slash", async () => {
     process.env.KNOWBE4_BASE_URL = "https://proxy.corp.example/knowbe4";
-    await apiRequest("/api/v1/phishing/security_tests");
+    await apiRequest("/v1/phishing/security_tests");
     expect(requestedUrl()).toBe(
-      "https://proxy.corp.example/knowbe4/api/v1/phishing/security_tests"
+      "https://proxy.corp.example/knowbe4/v1/phishing/security_tests"
     );
   });
 
   it("should collapse redundant slashes on either side of the join", async () => {
     process.env.KNOWBE4_BASE_URL = "https://proxy.corp.example/knowbe4//";
-    await apiRequest("//api/v1/users");
-    expect(requestedUrl()).toBe("https://proxy.corp.example/knowbe4/api/v1/users");
+    await apiRequest("//v1/users");
+    expect(requestedUrl()).toBe("https://proxy.corp.example/knowbe4/v1/users");
   });
 
   it("should append query params after the joined path", async () => {
     process.env.KNOWBE4_BASE_URL = "https://proxy.corp.example/knowbe4/";
-    await apiRequest("/api/v1/users", { params: { page: 2, per_page: 50 } });
+    await apiRequest("/v1/users", { params: { page: 2, per_page: 50 } });
     expect(requestedUrl()).toBe(
-      "https://proxy.corp.example/knowbe4/api/v1/users?page=2&per_page=50"
+      "https://proxy.corp.example/knowbe4/v1/users?page=2&per_page=50"
     );
   });
 });
