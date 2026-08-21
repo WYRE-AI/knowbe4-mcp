@@ -121,7 +121,7 @@ async function handleCall(
       if (status) params.status = status;
       if (groupId) params.group_id = groupId;
 
-      const result = await apiRequest<unknown>("/api/v1/users", { params });
+      const result = await apiRequest<unknown>("/v1/users", { params });
 
       const users = Array.isArray(result) ? result : (result as Record<string, unknown>)?.users ?? result;
 
@@ -150,7 +150,7 @@ async function handleCall(
 
       logger.info("API call: users.get", { userId });
 
-      const result = await apiRequest<unknown>(`/api/v1/users/${userId}`);
+      const result = await apiRequest<unknown>(`/v1/users/${userId}`);
 
       logger.debug("API response: users.get", { userId });
 
@@ -161,7 +161,7 @@ async function handleCall(
       try {
         if (result && typeof result === "object" && !Array.isArray(result)) {
           const card = await buildUserCard(result as Record<string, unknown>, (id) =>
-            apiRequest<unknown>(`/api/v1/users/${id}/risk_score_history`, {
+            apiRequest<unknown>(`/v1/users/${id}/risk_score_history`, {
               params: { page: 1, per_page: 100 },
             })
           );
@@ -195,7 +195,7 @@ async function handleCall(
 
       logger.info("API call: users.riskScoreHistory", { userId, page, perPage });
 
-      const result = await apiRequest<unknown>(`/api/v1/users/${userId}/risk_score_history`, {
+      const result = await apiRequest<unknown>(`/v1/users/${userId}/risk_score_history`, {
         params: { page, per_page: perPage },
       });
 

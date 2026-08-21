@@ -77,7 +77,7 @@ export async function apiRequest<T>(
   }
 
   // Join by string, not `new URL(path, base)`: the two-arg form does RFC 3986
-  // relative resolution, so a path-absolute reference like "/api/v1/account"
+  // relative resolution, so a path-absolute reference like "/v1/account"
   // replaces the base's own path entirely. That silently drops the prefix of a
   // KNOWBE4_BASE_URL pointing at a proxy/gateway (e.g. https://proxy/knowbe4/).
   const normalizedBase = creds.baseUrl.replace(/\/+$/, "");
