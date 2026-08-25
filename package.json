@@ -1,5 +1,5 @@
 {
-  "name": "@wyre-technology/knowbe4-mcp",
+  "name": "@wyre-ai/knowbe4-mcp",
   "version": "1.0.1",
   "description": "MCP server for KnowBe4 — security awareness training, phishing simulation, and user risk management API integration",
   "type": "module",
@@ -23,7 +23,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/wyre-technology/knowbe4-mcp.git"
+    "url": "git+https://github.com/WYRE-AI/knowbe4-mcp.git"
   },
   "keywords": [
     "mcp",
@@ -37,9 +37,9 @@
   "author": "Wyre Technology",
   "license": "Apache-2.0",
   "bugs": {
-    "url": "https://github.com/wyre-technology/knowbe4-mcp/issues"
+    "url": "https://github.com/WYRE-AI/knowbe4-mcp/issues"
   },
-  "homepage": "https://github.com/wyre-technology/knowbe4-mcp#readme",
+  "homepage": "https://github.com/WYRE-AI/knowbe4-mcp#readme",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0"
   },
