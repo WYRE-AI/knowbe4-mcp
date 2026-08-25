@@ -7,12 +7,12 @@ A Model Context Protocol (MCP) server for KnowBe4 security awareness training. E
 
 This is a [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server that connects Claude (or any MCP-compatible AI) to your KnowBe4 environment.
 
-> **Part of the [MSP Claude Plugins](https://github.com/wyre-technology) ecosystem** — a growing suite of AI integrations for the MSP stack. Built by MSPs, for MSPs.
+> **Part of the [MSP Claude Plugins](https://github.com/WYRE-AI) ecosystem** — a growing suite of AI integrations for the MSP stack. Built by MSPs, for MSPs.
 
 ## Installation
 
 ```bash
-npm install @wyre-technology/knowbe4-mcp
+npm install @wyre-ai/knowbe4-mcp
 ```
 
 ## Configuration
@@ -37,7 +37,7 @@ Add to your Claude Desktop `claude_desktop_config.json`:
   "mcpServers": {
     "knowbe4-mcp": {
       "command": "npx",
-      "args": ["@wyre-technology/knowbe4-mcp"],
+      "args": ["@wyre-ai/knowbe4-mcp"],
       "env": {
         "KNOWBE4_API_KEY": "your-knowbe4-api-key"
       }
@@ -51,7 +51,7 @@ Add to your Claude Desktop `claude_desktop_config.json`:
 ```bash
 claude mcp add knowbe4-mcp \
   -e KNOWBE4_API_KEY=your-value \
-  -- npx -y @wyre-technology/knowbe4-mcp
+  -- npx -y @wyre-ai/knowbe4-mcp
 ```
 
 ### Docker
@@ -98,7 +98,7 @@ neutral by default and brandable via `window.__BRAND__` injection or
 
 ```bash
 # Clone the repository
-git clone https://github.com/wyre-technology/knowbe4-mcp.git
+git clone https://github.com/WYRE-AI/knowbe4-mcp.git
 cd knowbe4-mcp
 
 # Install dependencies
