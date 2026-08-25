@@ -41,7 +41,7 @@
   },
   "homepage": "https://github.com/WYRE-AI/knowbe4-mcp#readme",
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.29.0"
+    "@modelcontextprotocol/sdk": "^1.30.0"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.4",
