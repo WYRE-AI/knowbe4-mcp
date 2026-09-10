@@ -134,19 +134,14 @@ export async function handle(
       // MCP Apps: attach the normalized card the ui:// user card renders from.
       // Best-effort, exactly like the REST handler: a failed history fetch
       // degrades the card, and any other failure just omits it.
-      let card: unknown = null;
-      try {
-        card = await buildUserCard(data.user as Record<string, unknown>, async (id) => {
-          const history = await tenantQuery<{ riskScoreHistories: Cursor }>(accountId, RISK_SCORE_HISTORY_QUERY, {
-            per: DEFAULT_PER_PAGE,
-            page: 1,
-            userId: id,
-          });
-          return history.riskScoreHistories.nodes;
+      const card = await buildUserCard(data.user as Record<string, unknown>, async (id) => {
+        const history = await tenantQuery<{ riskScoreHistories: Cursor }>(accountId, RISK_SCORE_HISTORY_QUERY, {
+          per: DEFAULT_PER_PAGE,
+          page: 1,
+          userId: id,
         });
-      } catch {
-        card = null;
-      }
+        return history.riskScoreHistories.nodes;
+      }).catch(() => null);
 
       return jsonResult(card ? { user: data.user, account_id: accountId, _card: card } : { user: data.user, account_id: accountId });
     }
