@@ -12,6 +12,8 @@
 import type { CallToolResult } from "../utils/types.js";
 import { tenantQuery } from "../utils/jit.js";
 import { logger } from "../utils/logger.js";
+import { elicitSelection } from "../utils/elicitation.js";
+import { buildUserCard } from "../card.builder.js";
 
 /** KnowBe4 GraphQL enforces a minimum page size of 25 on paginated cursors. */
 const MIN_PER_PAGE = 25;
@@ -43,7 +45,7 @@ export const USER_QUERY = `query TenantUser($id: Int!) {
     managerName managerEmail
     riskScore currentPpp role admin archived
     groupIds groups { id name }
-    lastSignInAt createdAt
+    employeeStartDate lastSignInAt createdAt
   }
 }`;
 
@@ -81,8 +83,26 @@ export async function handle(
     case "knowbe4_users_list": {
       const page = (args.page as number) || 1;
       const per = clampPerPage(args.per_page);
-      const status = typeof args.status === "string" ? STATUS_FILTERS[args.status.toLowerCase()] : undefined;
+      let statusArg = typeof args.status === "string" ? args.status : undefined;
       const group = (args.group_id as number) || undefined;
+
+      // Same prompt as the REST handler: with no filters, ask what to list.
+      if (!statusArg && !group) {
+        const filterChoice = await elicitSelection(
+          "No filters specified. Would you like to filter users?",
+          "filter",
+          [
+            { value: "active", label: "Active users only" },
+            { value: "archived", label: "Archived users only" },
+            { value: "all", label: "All users" },
+          ]
+        );
+        if (filterChoice && filterChoice !== "all") {
+          statusArg = filterChoice;
+        }
+      }
+
+      const status = statusArg ? STATUS_FILTERS[statusArg.toLowerCase()] : undefined;
 
       logger.info("API call: users.list (partner)", { accountId, page, per, status, group });
 
@@ -111,7 +131,24 @@ export async function handle(
         return errorResult(`Error: user ${userId} not found in account ${accountId}`);
       }
 
-      return jsonResult({ user: data.user, account_id: accountId });
+      // MCP Apps: attach the normalized card the ui:// user card renders from.
+      // Best-effort, exactly like the REST handler: a failed history fetch
+      // degrades the card, and any other failure just omits it.
+      let card: unknown = null;
+      try {
+        card = await buildUserCard(data.user as Record<string, unknown>, async (id) => {
+          const history = await tenantQuery<{ riskScoreHistories: Cursor }>(accountId, RISK_SCORE_HISTORY_QUERY, {
+            per: DEFAULT_PER_PAGE,
+            page: 1,
+            userId: id,
+          });
+          return history.riskScoreHistories.nodes;
+        });
+      } catch {
+        card = null;
+      }
+
+      return jsonResult(card ? { user: data.user, account_id: accountId, _card: card } : { user: data.user, account_id: accountId });
     }
 
     case "knowbe4_users_risk_score_history": {

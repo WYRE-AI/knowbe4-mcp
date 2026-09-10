@@ -56,9 +56,8 @@ Notes:
 - KnowBe4 limits GraphQL to 4 requests/second and 10 requests per licensed
   user per day, with a 150-line complexity cap per query.
 - Partner-mode results use KnowBe4's GraphQL field names (camelCase), so
-  they differ in shape from the REST results of the same tool.
-- The interactive user card is not rendered for partner-mode
-  `knowbe4_users_get` calls.
+  they differ in shape from the REST results of the same tool. The
+  interactive user card and the user-list filter prompt work in both modes.
 
 ## Usage
 

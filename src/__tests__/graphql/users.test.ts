@@ -8,10 +8,17 @@ vi.mock("../../utils/jit.js", () => ({
   tenantQuery: vi.fn(),
 }));
 
+// Elicitation is unsupported by default (returns undefined after mockReset).
+vi.mock("../../utils/elicitation.js", () => ({
+  elicitSelection: vi.fn(),
+}));
+
 import { handle, USERS_QUERY, USER_QUERY, RISK_SCORE_HISTORY_QUERY } from "../../graphql/users.js";
 import { tenantQuery } from "../../utils/jit.js";
+import { elicitSelection } from "../../utils/elicitation.js";
 
 const mockTenantQuery = vi.mocked(tenantQuery);
+const mockElicitSelection = vi.mocked(elicitSelection);
 
 const ACCOUNT_ID = 42;
 const pagination = { page: 1, pages: 1, per: 100, totalCount: 1 };
@@ -82,6 +89,44 @@ describe("GraphQL users tools", () => {
 
       await expect(handle("knowbe4_users_list", ACCOUNT_ID, {})).rejects.toThrow("Authentication failed");
     });
+
+    it("offers the same filter prompt as the REST tool when no filters are given", async () => {
+      mockElicitSelection.mockResolvedValueOnce("archived");
+      mockTenantQuery.mockResolvedValueOnce(listResponse);
+
+      await handle("knowbe4_users_list", ACCOUNT_ID, {});
+
+      expect(mockElicitSelection).toHaveBeenCalledWith(
+        "No filters specified. Would you like to filter users?",
+        "filter",
+        [
+          { value: "active", label: "Active users only" },
+          { value: "archived", label: "Archived users only" },
+          { value: "all", label: "All users" },
+        ]
+      );
+      expect(mockTenantQuery.mock.calls[0][2]).toMatchObject({ status: "ARCHIVED" });
+    });
+
+    it("treats an 'all' answer (or a declined prompt) as no status filter", async () => {
+      mockElicitSelection.mockResolvedValueOnce("all").mockResolvedValueOnce(null);
+      mockTenantQuery.mockResolvedValueOnce(listResponse).mockResolvedValueOnce(listResponse);
+
+      await handle("knowbe4_users_list", ACCOUNT_ID, {});
+      await handle("knowbe4_users_list", ACCOUNT_ID, {});
+
+      expect(mockTenantQuery.mock.calls[0][2]).toMatchObject({ status: undefined });
+      expect(mockTenantQuery.mock.calls[1][2]).toMatchObject({ status: undefined });
+    });
+
+    it("does not prompt when a filter is already given", async () => {
+      mockTenantQuery.mockResolvedValueOnce(listResponse).mockResolvedValueOnce(listResponse);
+
+      await handle("knowbe4_users_list", ACCOUNT_ID, { status: "active" });
+      await handle("knowbe4_users_list", ACCOUNT_ID, { group_id: 3 });
+
+      expect(mockElicitSelection).not.toHaveBeenCalled();
+    });
   });
 
   describe("knowbe4_users_get", () => {
@@ -114,6 +159,64 @@ describe("GraphQL users tools", () => {
 
       expect(result.isError).toBe(true);
       expect(result.content[0].text).toBe("Error: user 7 not found in account 42");
+      expect(mockTenantQuery).toHaveBeenCalledTimes(1);
+    });
+
+    it("attaches the MCP Apps card built from the GraphQL user and risk history", async () => {
+      mockTenantQuery
+        .mockResolvedValueOnce({
+          user: {
+            id: 7,
+            firstName: "Ada",
+            lastName: "Lovelace",
+            email: "ada@example.com",
+            archived: false,
+            riskScore: 33.3,
+            currentPpp: 10,
+            groups: [{ id: 1, name: "All" }],
+          },
+        })
+        .mockResolvedValueOnce({
+          riskScoreHistories: {
+            nodes: [{ id: 1, riskScore: 40, createdAt: "2026-05-01T00:00:00Z" }, { id: 2, riskScore: 33.3, createdAt: "2026-06-01T00:00:00Z" }],
+            pagination,
+          },
+        });
+
+      const result = await handle("knowbe4_users_get", ACCOUNT_ID, { user_id: 7 });
+
+      expect(mockTenantQuery).toHaveBeenNthCalledWith(2, ACCOUNT_ID, RISK_SCORE_HISTORY_QUERY, {
+        per: 100,
+        page: 1,
+        userId: 7,
+      });
+      expect(USER_QUERY).toContain("employeeStartDate");
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed._card).toMatchObject({
+        id: 7,
+        name: "Ada Lovelace",
+        status: "active",
+        riskScore: 33.3,
+        phishPronePct: 10,
+        groupCount: 1,
+        riskHistory: [
+          { date: "2026-05-01T00:00:00Z", score: 40 },
+          { date: "2026-06-01T00:00:00Z", score: 33.3 },
+        ],
+      });
+      expect(parsed.user.id).toBe(7);
+    });
+
+    it("still returns the card without a trend when the history fetch fails", async () => {
+      mockTenantQuery
+        .mockResolvedValueOnce({ user: { id: 7, displayName: "Ada", email: "ada@example.com" } })
+        .mockRejectedValueOnce(new Error("Rate limit exceeded"));
+
+      const result = await handle("knowbe4_users_get", ACCOUNT_ID, { user_id: 7 });
+
+      expect(result.isError).toBeUndefined();
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed._card).toMatchObject({ id: 7, name: "Ada", riskHistory: [] });
     });
   });
 
