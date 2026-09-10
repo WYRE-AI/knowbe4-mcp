@@ -55,10 +55,21 @@ const { mockHandlers } = vi.hoisted(() => {
       ]),
       handleCall: vi.fn(),
     },
+    partner: {
+      getTools: vi.fn().mockReturnValue([
+        { name: "knowbe4_partner_accounts_list", description: "List managed accounts" },
+        { name: "knowbe4_partner_account_get", description: "Get managed account" },
+      ]),
+      handleCall: vi.fn(),
+    },
   };
 
   return { mockHandlers };
 });
+
+vi.mock("../domains/partner.js", () => ({
+  partnerHandler: mockHandlers.partner,
+}));
 
 // Mock all domain handlers
 vi.mock("../domains/account.js", () => ({
@@ -133,7 +144,7 @@ describe("Domain Navigation", () => {
   describe("getAvailableDomains", () => {
     it("should return all available domains", () => {
       const domains = getAvailableDomains();
-      expect(domains).toEqual(["account", "users", "groups", "phishing", "training", "reporting"]);
+      expect(domains).toEqual(["account", "users", "groups", "phishing", "training", "reporting", "partner"]);
     });
 
     it("should return a consistent list", () => {
@@ -151,6 +162,7 @@ describe("Domain Navigation", () => {
       expect(isDomainName("phishing")).toBe(true);
       expect(isDomainName("training")).toBe(true);
       expect(isDomainName("reporting")).toBe(true);
+      expect(isDomainName("partner")).toBe(true);
     });
 
     it("should return false for invalid domain names", () => {
@@ -197,6 +209,16 @@ describe("Domain Navigation", () => {
       const handler = await getDomainHandler("reporting");
       expect(handler).toBeDefined();
       expect(handler.getTools()).toHaveLength(3);
+    });
+
+    it("should load partner domain handler", async () => {
+      mockHandlers.partner.getTools.mockReturnValue([
+        { name: "knowbe4_partner_accounts_list", description: "List managed accounts" },
+        { name: "knowbe4_partner_account_get", description: "Get managed account" },
+      ]);
+      const handler = await getDomainHandler("partner");
+      expect(handler).toBeDefined();
+      expect(handler.getTools()).toHaveLength(2);
     });
 
     it("should cache domain handlers", async () => {

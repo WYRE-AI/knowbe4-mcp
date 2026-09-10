@@ -22,24 +22,27 @@
 
 import { AsyncLocalStorage } from "node:async_hooks";
 import { logger } from "./logger.js";
-import { KNOWBE4_REGIONS, type KnowBe4Credentials } from "./types.js";
+import { KNOWBE4_REGIONS, type KnowBe4Credentials, type RequestCredentials } from "./types.js";
 
 /**
  * Per-request credential store for gateway mode.
  * Prevents cross-tenant leakage when concurrent requests
- * are handled by the same process.
+ * are handled by the same process. Holds the tenant (REST) and/or
+ * partner (GraphQL) credentials for the current request.
  */
-export const credentialStore = new AsyncLocalStorage<KnowBe4Credentials>();
+export const credentialStore = new AsyncLocalStorage<RequestCredentials>();
 
 /**
- * Get credentials from the request-scoped store (gateway mode)
+ * Get tenant credentials from the request-scoped store (gateway mode)
  * or from environment variables (stdio/env mode).
  */
 export function getCredentials(): KnowBe4Credentials | null {
-  // Check request-scoped credentials first (gateway mode)
-  const override = credentialStore.getStore();
-  if (override) {
-    return override;
+  // A request-scoped store wins outright: even when it carries no tenant
+  // key we must not fall back to env vars, or one gateway user could
+  // silently query another tenant.
+  const scoped = credentialStore.getStore();
+  if (scoped) {
+    return scoped.tenant ?? null;
   }
 
   // Fall back to environment variables (stdio/env mode)

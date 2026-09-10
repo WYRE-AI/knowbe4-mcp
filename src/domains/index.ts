@@ -54,6 +54,11 @@ export async function getDomainHandler(
       handler = reportingHandler;
       break;
     }
+    case "partner": {
+      const { partnerHandler } = await import("./partner.js");
+      handler = partnerHandler;
+      break;
+    }
     default:
       throw new Error(`Unknown domain: ${domain}`);
   }
@@ -66,7 +71,7 @@ export async function getDomainHandler(
  * Get all available domain names
  */
 export function getAvailableDomains(): DomainName[] {
-  return ["account", "users", "groups", "phishing", "training", "reporting"];
+  return ["account", "users", "groups", "phishing", "training", "reporting", "partner"];
 }
 
 /**
