@@ -21,10 +21,44 @@ Set the following environment variables:
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `KNOWBE4_API_KEY` | Yes | Your KnowBe4 API key |
-| `KNOWBE4_REGION` | No | API region: us, eu, ca, uk, de (default: us) |
-| `KNOWBE4_BASE_URL` | No | Custom base URL (overrides region) |
+| `KNOWBE4_API_KEY` | One of the two keys | Your KnowBe4 Reporting API key for a single tenant |
+| `KNOWBE4_PARTNER_API_KEY` | One of the two keys | Your KnowBe4 partner Product API key (see [Partner mode](#partner-mode-one-key-for-every-managed-tenant)) |
+| `KNOWBE4_REGION` | No | API region: us, eu, ca, uk, de (default: us). Selects both the REST and GraphQL endpoints |
+| `KNOWBE4_BASE_URL` | No | Custom REST base URL (overrides region) |
+| `KNOWBE4_GRAPHQL_URL` | No | Custom GraphQL endpoint (overrides region) |
 | `MCP_TRANSPORT` | No | Transport mode: stdio (default) or http |
+
+## Partner mode (one key for every managed tenant)
+
+MSPs and multi-account admins normally need one Reporting API key per customer
+tenant. Partner mode replaces that with a single partner Product API key from
+the KnowBe4 partner (management) console:
+
+1. Set `KNOWBE4_PARTNER_API_KEY` (or send the `X-KnowBe4-Partner-API-Key`
+   header in gateway mode). `KNOWBE4_API_KEY` becomes optional.
+2. Call `knowbe4_partner_accounts_list` to see every managed account with its
+   risk score, phish-prone percentage, percent trained, seats, and
+   subscription end date. Filter with `search` by company name or domain.
+3. Pass the account's `id` as `account_id` to any tenant tool, for example
+   `knowbe4_users_list` with `account_id: 12345`. The server mints a
+   just-in-time (JIT) token for that tenant through the partner API, caches it
+   for 14 minutes, and runs the query against KnowBe4's tenant GraphQL API.
+
+Without `account_id`, tenant tools keep using the REST Reporting API and
+`KNOWBE4_API_KEY` exactly as before. `account_id` never falls back to the
+single-tenant key: if partner mode is not configured the tool returns an error
+instead of silently answering from the wrong tenant.
+
+Notes:
+
+- The partner API requires a Diamond-level partner subscription; the tenant
+  GraphQL API requires Diamond or SAT Advanced on the managed account.
+- KnowBe4 limits GraphQL to 4 requests/second and 10 requests per licensed
+  user per day, with a 150-line complexity cap per query.
+- Partner-mode results use KnowBe4's GraphQL field names (camelCase), so
+  they differ in shape from the REST results of the same tool.
+- The interactive user card is not rendered for partner-mode
+  `knowbe4_users_get` calls.
 
 ## Usage
 
@@ -82,6 +116,10 @@ Training campaign management
 
 ### Users
 User management and risk scoring
+
+### Partner
+Managed accounts (customer tenants) and fleet-wide risk metrics. Requires
+`KNOWBE4_PARTNER_API_KEY`; see [Partner mode](#partner-mode-one-key-for-every-managed-tenant).
 
 ## Interactive User Card (MCP Apps)
 
