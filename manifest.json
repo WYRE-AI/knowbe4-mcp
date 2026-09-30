@@ -15,7 +15,6 @@
   },
   "license": "Apache-2.0",
   "keywords": ["knowbe4", "security-awareness", "phishing", "training", "mcp", "msp"],
-  "icon": "icon.png",
   "server": {
     "type": "node",
     "entry_point": "dist/index.js",
