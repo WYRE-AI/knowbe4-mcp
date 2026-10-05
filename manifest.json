@@ -23,6 +23,7 @@
       "args": ["${__dirname}/dist/index.js"],
       "env": {
         "KNOWBE4_API_KEY": "${user_config.api_key}",
+        "KNOWBE4_PARTNER_API_KEY": "${user_config.partner_api_key}",
         "KNOWBE4_REGION": "${user_config.region}"
       }
     }
@@ -32,8 +33,15 @@
     "api_key": {
       "type": "string",
       "title": "API Key",
-      "description": "Your KnowBe4 Reporting API key (from Account Settings > API)",
-      "required": true,
+      "description": "Your KnowBe4 Reporting API key for a single tenant (from Account Settings > API). Required unless a Partner API Key is set.",
+      "required": false,
+      "sensitive": true
+    },
+    "partner_api_key": {
+      "type": "string",
+      "title": "Partner API Key",
+      "description": "Partner mode: your KnowBe4 partner Product API key (from the partner console). Lets tenant tools take an account_id for any managed tenant.",
+      "required": false,
       "sensitive": true
     },
     "region": {

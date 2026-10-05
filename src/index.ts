@@ -13,9 +13,14 @@
  * - http: For hosted deployment with optional gateway auth
  *
  * Auth modes:
- * - env (default): Credentials from KNOWBE4_API_KEY environment variable
+ * - env (default): Credentials from KNOWBE4_API_KEY (tenant, REST) and/or
+ *   KNOWBE4_PARTNER_API_KEY (partner, GraphQL) environment variables
  * - gateway: Credentials injected from request headers by the MCP gateway
- *   - Header: X-KnowBe4-API-Key
+ *   - Headers: X-KnowBe4-API-Key (tenant), X-KnowBe4-Partner-API-Key (partner)
+ *
+ * Partner mode: every tenant tool accepts an optional `account_id`. When set,
+ * the call is served over the tenant GraphQL API with a JIT token minted from
+ * the partner key (see src/graphql/). Without it, the REST path is used.
  *
  * Domains:
  * - account: Account info and risk score history
@@ -24,6 +29,7 @@
  * - phishing: Phishing campaigns, security tests, and recipient results
  * - training: Training campaigns, enrollments, store purchases, and policies
  * - reporting: Aggregated reports, risk overview, and phishing/training summaries
+ * - partner: Managed accounts (customer tenants) and fleet-wide risk metrics
  */
 
 import { createServer as createHttpServer, IncomingMessage, ServerResponse } from "node:http";
@@ -36,8 +42,10 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import type { Tool, CallToolRequest } from "@modelcontextprotocol/sdk/types.js";
 import { getDomainHandler, getAvailableDomains } from "./domains/index.js";
-import { isDomainName, KNOWBE4_REGIONS, type DomainName } from "./utils/types.js";
+import { isDomainName, KNOWBE4_REGIONS, type DomainName, type RequestCredentials } from "./utils/types.js";
 import { getCredentials, credentialStore } from "./utils/client.js";
+import { resolveGraphqlUrl, getPartnerCredentials } from "./utils/graphql.js";
+import { isPartnerScoped, callViaPartner, withAccountIdArg } from "./graphql/index.js";
 import { logger } from "./utils/logger.js";
 import { setServerRef } from "./utils/server-ref.js";
 import { TOOL_CATEGORIES, findDomainForTool, routeIntent } from "./utils/categories.js";
@@ -189,6 +197,21 @@ const domainToolMap = new Map<DomainName, Tool[]>();
 let allDomainTools: Tool[] | null = null;
 
 /**
+ * Tool definitions for one domain, cached. Tenant domains get the optional
+ * `account_id` argument so they can be pointed at a managed account in
+ * partner mode; the partner domain's own tools already take the id they need.
+ */
+async function getToolsForDomain(domain: DomainName): Promise<Tool[]> {
+  let tools = domainToolMap.get(domain);
+  if (!tools) {
+    const handler = await getDomainHandler(domain);
+    tools = domain === "partner" ? handler.getTools() : withAccountIdArg(handler.getTools());
+    domainToolMap.set(domain, tools);
+  }
+  return tools;
+}
+
+/**
  * Load all domain tools (lazy-loaded on first access)
  */
 async function getAllDomainTools(): Promise<Tool[]> {
@@ -196,16 +219,9 @@ async function getAllDomainTools(): Promise<Tool[]> {
     return allDomainTools;
   }
 
-  const domains = getAvailableDomains();
   const tools: Tool[] = [];
-
-  for (const domain of domains) {
-    if (!domainToolMap.has(domain)) {
-      const handler = await getDomainHandler(domain);
-      const domainTools = handler.getTools();
-      domainToolMap.set(domain, domainTools);
-    }
-    tools.push(...domainToolMap.get(domain)!);
+  for (const domain of getAvailableDomains()) {
+    tools.push(...(await getToolsForDomain(domain)));
   }
 
   allDomainTools = tools;
@@ -264,8 +280,7 @@ const handleCallTool = async (request: CallToolRequest) => {
         };
       }
 
-      const handler = await getDomainHandler(category);
-      const tools = handler.getTools();
+      const tools = await getToolsForDomain(category);
 
       return {
         content: [
@@ -293,20 +308,6 @@ const handleCallTool = async (request: CallToolRequest) => {
       const toolName = (args as { toolName: string; arguments?: Record<string, unknown> }).toolName;
       const toolArgs = (args as { toolName: string; arguments?: Record<string, unknown> }).arguments ?? {};
 
-      // Validate credentials
-      const creds = getCredentials();
-      if (!creds) {
-        return {
-          content: [
-            {
-              type: "text",
-              text: "Error: No API credentials configured. Please set the KNOWBE4_API_KEY environment variable.",
-            },
-          ],
-          isError: true,
-        };
-      }
-
       const domain = findDomainForTool(toolName);
       if (!domain) {
         return {
@@ -320,8 +321,12 @@ const handleCallTool = async (request: CallToolRequest) => {
         };
       }
 
+      // Credential errors surface from the client layer with configuration
+      // hints for whichever mode (tenant REST or partner GraphQL) is in play.
       const handler = await getDomainHandler(domain);
-      const result = await handler.handleCall(toolName, toolArgs);
+      const result = isPartnerScoped(toolArgs)
+        ? await callViaPartner(toolName, toolArgs)
+        : await handler.handleCall(toolName, toolArgs);
 
       logger.debug("Meta-tool execute completed", {
         tool: toolName,
@@ -392,8 +397,7 @@ const handleCallTool = async (request: CallToolRequest) => {
         };
       }
 
-      const handler = await getDomainHandler(domain);
-      const domainTools = handler.getTools();
+      const domainTools = await getToolsForDomain(domain);
 
       const domainDescriptions: Record<DomainName, string> = {
         account: "Account info and risk score history",
@@ -401,7 +405,8 @@ const handleCallTool = async (request: CallToolRequest) => {
         groups: "Group management, members, and group risk scores",
         phishing: "Phishing campaigns, security tests, and recipient results",
         training: "Training campaigns, enrollments, store purchases, and policies",
-        reporting: "Aggregated reports, risk overview, and phishing/training summaries"
+        reporting: "Aggregated reports, risk overview, and phishing/training summaries",
+        partner: "Partner mode: managed accounts (customer tenants) and fleet-wide risk metrics",
       };
 
       const toolSummary = domainTools
@@ -435,43 +440,33 @@ const handleCallTool = async (request: CallToolRequest) => {
       const creds = getCredentials();
       const credStatus = creds
         ? `Configured (region: ${process.env.KNOWBE4_REGION || "us"})`
-        : "NOT CONFIGURED - Please set KNOWBE4_API_KEY environment variable";
+        : "NOT CONFIGURED - set KNOWBE4_API_KEY to query a single tenant without account_id";
+      const partnerCreds = getPartnerCredentials();
+      const partnerStatus = partnerCreds
+        ? `Configured (endpoint: ${partnerCreds.graphqlUrl}) - tenant tools accept account_id`
+        : "Not configured - set KNOWBE4_PARTNER_API_KEY to enable account_id on tenant tools";
 
       return {
         content: [
           {
             type: "text",
-            text: `KnowBe4 MCP Server Status\n\nCredentials: ${credStatus}\nAvailable domains: ${getAvailableDomains().join(", ")}\n\nAll tools are available at all times. Use knowbe4_navigate to discover tools by domain.`,
+            text: `KnowBe4 MCP Server Status\n\nTenant credentials (REST): ${credStatus}\nPartner credentials (GraphQL): ${partnerStatus}\nAvailable domains: ${getAvailableDomains().join(", ")}\n\nAll tools are available at all times. Use knowbe4_navigate to discover tools by domain.`,
           },
         ],
       };
     }
 
-    // Route to appropriate domain handler based on tool name pattern
+    // Route to the owning domain handler. The category map is the single
+    // source of truth for tool ownership (it also covers knowbe4_store_* and
+    // knowbe4_policies_*, which live in the training domain).
     const toolArgs = (args ?? {}) as Record<string, unknown>;
+    const domain = findDomainForTool(name);
 
-    if (name.startsWith("knowbe4_account_")) {
-      const handler = await getDomainHandler("account");
-      return await handler.handleCall(name, toolArgs);
-    }
-    if (name.startsWith("knowbe4_users_")) {
-      const handler = await getDomainHandler("users");
-      return await handler.handleCall(name, toolArgs);
-    }
-    if (name.startsWith("knowbe4_groups_")) {
-      const handler = await getDomainHandler("groups");
-      return await handler.handleCall(name, toolArgs);
-    }
-    if (name.startsWith("knowbe4_phishing_")) {
-      const handler = await getDomainHandler("phishing");
-      return await handler.handleCall(name, toolArgs);
-    }
-    if (name.startsWith("knowbe4_training_")) {
-      const handler = await getDomainHandler("training");
-      return await handler.handleCall(name, toolArgs);
-    }
-    if (name.startsWith("knowbe4_reporting_")) {
-      const handler = await getDomainHandler("reporting");
+    if (domain) {
+      if (isPartnerScoped(toolArgs)) {
+        return await callViaPartner(name, toolArgs);
+      }
+      const handler = await getDomainHandler(domain);
       return await handler.handleCall(name, toolArgs);
     }
 
@@ -665,32 +660,41 @@ async function startHttpTransport(): Promise<void> {
         return;
       }
 
-      // Gateway mode: extract credentials from headers
+      // Gateway mode: extract credentials from headers. A tenant key, a
+      // partner key, or both may be supplied; at least one is required.
       if (isGatewayMode) {
         const apiKey = req.headers["x-knowbe4-api-key"] as string | undefined;
+        const partnerApiKey = req.headers["x-knowbe4-partner-api-key"] as string | undefined;
         const region = req.headers["x-knowbe4-region"] as string | undefined;
 
-        if (!apiKey) {
+        if (!apiKey && !partnerApiKey) {
           res.writeHead(401, { "Content-Type": "application/json" });
           res.end(
             JSON.stringify({
               error: "Missing credentials",
               message:
-                "Gateway mode requires X-KnowBe4-API-Key header",
-              required: ["X-KnowBe4-API-Key"],
+                "Gateway mode requires an X-KnowBe4-API-Key header (tenant) and/or an X-KnowBe4-Partner-API-Key header (partner)",
+              required: ["X-KnowBe4-API-Key | X-KnowBe4-Partner-API-Key"],
               optional: ["X-KnowBe4-Region"],
             })
           );
           return;
         }
 
-        // Build credentials with region-to-baseUrl resolution
+        // Build credentials with region-to-endpoint resolution
         const regionKey = (region || "us").toLowerCase();
-        const baseUrl = KNOWBE4_REGIONS[regionKey] || KNOWBE4_REGIONS.us;
+        const scoped: RequestCredentials = {};
+        if (apiKey) {
+          scoped.tenant = { apiKey, baseUrl: KNOWBE4_REGIONS[regionKey] || KNOWBE4_REGIONS.us };
+        }
+        if (partnerApiKey) {
+          scoped.partner = { partnerApiKey, graphqlUrl: resolveGraphqlUrl(regionKey) };
+        }
 
         // Build the fresh per-request server + transport INSIDE the credential
-        // scope so all downstream getCredentials()/apiRequest() calls use these creds.
-        credentialStore.run({ apiKey, baseUrl }, () => {
+        // scope so all downstream getCredentials()/getPartnerCredentials()
+        // calls use these creds.
+        credentialStore.run(scoped, () => {
           handleMcpRequest(req, res);
         });
         return;
@@ -710,7 +714,11 @@ async function startHttpTransport(): Promise<void> {
       logger.info(`KnowBe4 MCP server listening on http://${host}:${port}/mcp`);
       logger.info(`Health check available at http://${host}:${port}/health`);
       logger.info(
-        `Authentication mode: ${isGatewayMode ? "gateway (X-KnowBe4-API-Key header)" : "env (KNOWBE4_API_KEY environment variable)"}`
+        `Authentication mode: ${
+          isGatewayMode
+            ? "gateway (X-KnowBe4-API-Key and/or X-KnowBe4-Partner-API-Key headers)"
+            : "env (KNOWBE4_API_KEY and/or KNOWBE4_PARTNER_API_KEY environment variables)"
+        }`
       );
       resolve();
     });

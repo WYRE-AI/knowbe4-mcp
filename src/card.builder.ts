@@ -94,11 +94,23 @@ function num(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
+/** First present value among the given keys (REST snake_case, then GraphQL camelCase). */
+function pick(obj: Record<string, unknown>, ...keys: string[]): unknown {
+  for (const key of keys) {
+    const value = obj[key];
+    if (value !== undefined && value !== null) return value;
+  }
+  return undefined;
+}
+
 /**
- * Build the renderable card from a knowbe4_users_get payload. The KnowBe4 user
- * object already carries resolved display strings (names, department, manager)
- * so no id lookups are needed. The risk-score trend is fetched best-effort via
- * the provided callback; a failed fetch just renders the card without a trend.
+ * Build the renderable card from a knowbe4_users_get payload. Accepts both the
+ * REST Reporting API user (snake_case: first_name, current_risk_score, ...)
+ * and the tenant GraphQL user served in partner mode (camelCase: firstName,
+ * riskScore, ...). The user object already carries resolved display strings
+ * (names, department, manager) so no id lookups are needed. The risk-score
+ * trend is fetched best-effort via the provided callback; a failed fetch just
+ * renders the card without a trend.
  */
 export async function buildUserCard(
   user: Record<string, unknown>,
@@ -107,33 +119,34 @@ export async function buildUserCard(
   const id = num(user?.id);
   if (id === undefined) return null;
 
-  const firstName = str(user.first_name);
-  const lastName = str(user.last_name);
+  const firstName = str(pick(user, "first_name", "firstName"));
+  const lastName = str(pick(user, "last_name", "lastName"));
   const email = str(user.email);
-  const name = [firstName, lastName].filter(Boolean).join(" ") || email;
+  const name = [firstName, lastName].filter(Boolean).join(" ") || str(user.displayName) || email;
   if (!name) return null;
 
   const card: UserCard = { id, name, riskHistory: [] };
 
   if (email) card.email = email;
-  const status = str(user.status);
+  const status = str(user.status) ?? (typeof user.archived === "boolean" ? (user.archived ? "archived" : "active") : undefined);
   if (status) card.status = status;
-  const jobTitle = str(user.job_title);
+  const jobTitle = str(pick(user, "job_title", "jobTitle"));
   if (jobTitle) card.jobTitle = jobTitle;
   const department = str(user.department) ?? str(user.division);
   if (department) card.department = department;
-  const manager = str(user.manager_name);
+  const manager = str(pick(user, "manager_name", "managerName"));
   if (manager) card.manager = manager;
   const location = str(user.location);
   if (location) card.location = location;
-  if (Array.isArray(user.groups)) card.groupCount = user.groups.length;
-  const riskScore = num(user.current_risk_score);
+  const groups = pick(user, "groups", "groupIds");
+  if (Array.isArray(groups)) card.groupCount = groups.length;
+  const riskScore = num(pick(user, "current_risk_score", "riskScore"));
   if (riskScore !== undefined) card.riskScore = riskScore;
-  const phishProne = num(user.phish_prone_percentage);
+  const phishProne = num(pick(user, "phish_prone_percentage", "currentPpp"));
   if (phishProne !== undefined) card.phishPronePct = phishProne;
-  const joinedOn = str(user.joined_on);
+  const joinedOn = str(pick(user, "joined_on", "employeeStartDate"));
   if (joinedOn) card.joinedOn = joinedOn;
-  const lastSignIn = str(user.last_sign_in);
+  const lastSignIn = str(pick(user, "last_sign_in", "lastSignInAt"));
   if (lastSignIn) card.lastSignIn = lastSignIn;
 
   // Risk-score history gives the card a visible improvement trend.
@@ -145,10 +158,13 @@ export async function buildUserCard(
         : (result as Record<string, unknown>)?.data;
       if (Array.isArray(history)) {
         card.riskHistory = history
-          .map((entry) => ({
-            date: str((entry as Record<string, unknown>)?.date) ?? "",
-            score: num((entry as Record<string, unknown>)?.risk_score),
-          }))
+          .map((entry) => {
+            const e = (entry ?? {}) as Record<string, unknown>;
+            return {
+              date: str(pick(e, "date", "createdAt")) ?? "",
+              score: num(pick(e, "risk_score", "riskScore")),
+            };
+          })
           .filter((e): e is { date: string; score: number } => e.score !== undefined)
           .slice(-CARD_RISK_HISTORY_LIMIT);
       }

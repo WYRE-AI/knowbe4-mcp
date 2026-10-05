@@ -76,6 +76,13 @@ export const TOOL_CATEGORIES: Record<DomainName, ToolCategory> = {
       "knowbe4_reporting_risk_overview",
     ],
   },
+  partner: {
+    description: "Partner mode: managed accounts (customer tenants) and fleet-wide risk metrics",
+    tools: [
+      "knowbe4_partner_accounts_list",
+      "knowbe4_partner_account_get",
+    ],
+  },
 };
 
 /**
@@ -124,6 +131,13 @@ const INTENT_KEYWORDS: Record<string, string[]> = {
   policies: ["knowbe4_policies_list"],
   store: ["knowbe4_store_purchases_list"],
   purchase: ["knowbe4_store_purchases_list", "knowbe4_store_purchases_get"],
+  // Partner
+  tenant: ["knowbe4_partner_accounts_list", "knowbe4_partner_account_get"],
+  tenants: ["knowbe4_partner_accounts_list"],
+  customer: ["knowbe4_partner_accounts_list", "knowbe4_partner_account_get"],
+  customers: ["knowbe4_partner_accounts_list"],
+  "managed account": ["knowbe4_partner_accounts_list", "knowbe4_partner_account_get"],
+  partner: ["knowbe4_partner_accounts_list"],
   // Reporting
   report: ["knowbe4_reporting_phishing_summary", "knowbe4_reporting_training_summary", "knowbe4_reporting_risk_overview"],
   summary: ["knowbe4_reporting_phishing_summary", "knowbe4_reporting_training_summary"],

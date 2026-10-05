@@ -164,6 +164,55 @@ describe("MCP Apps user card", () => {
       });
     });
 
+    it("normalizes a partner-mode (GraphQL camelCase) user the same way", async () => {
+      const graphqlUser = {
+        id: 667542,
+        firstName: "William",
+        lastName: "Marcoux",
+        displayName: "William Marcoux",
+        email: "wmarcoux@kb4-demo.com",
+        jobTitle: "VP of Sales",
+        department: "Sales",
+        division: "Sales West",
+        managerName: "Michael Scott",
+        location: "Office A",
+        groups: [{ id: 3264, name: "Sales" }, { id: 3265, name: "West" }],
+        riskScore: 45.742,
+        currentPpp: 14.235,
+        archived: false,
+        employeeStartDate: "2025-04-02T15:02:38.000Z",
+        lastSignInAt: "2026-07-01T15:02:38.000Z",
+      };
+      const card = await buildUserCard(graphqlUser, async () => [
+        { id: 1, riskScore: 60.1, createdAt: "2026-05-01" },
+        { id: 2, riskScore: 45.742, createdAt: "2026-06-01" },
+      ]);
+      expect(card).toEqual({
+        id: 667542,
+        name: "William Marcoux",
+        email: "wmarcoux@kb4-demo.com",
+        status: "active",
+        jobTitle: "VP of Sales",
+        department: "Sales",
+        manager: "Michael Scott",
+        location: "Office A",
+        groupCount: 2,
+        riskScore: 45.742,
+        phishPronePct: 14.235,
+        joinedOn: "2025-04-02T15:02:38.000Z",
+        lastSignIn: "2026-07-01T15:02:38.000Z",
+        riskHistory: [
+          { date: "2026-05-01", score: 60.1 },
+          { date: "2026-06-01", score: 45.742 },
+        ],
+      });
+    });
+
+    it("derives status from `archived` and name from displayName for GraphQL users", async () => {
+      const card = await buildUserCard({ id: 2, displayName: "Service Account", archived: true, groupIds: [1, 2, 3] });
+      expect(card).toMatchObject({ id: 2, name: "Service Account", status: "archived", groupCount: 3 });
+    });
+
     it("falls back to division, then email, when fields are missing", async () => {
       const bare = { id: 1, email: "jd@example.com", division: "Ops" };
       const card = await buildUserCard(bare, mockHistory);
