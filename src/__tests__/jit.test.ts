@@ -4,7 +4,7 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { getJitToken, tenantQuery, clearJitTokenCache, JIT_TOKEN_TTL_MS } from "../utils/jit.js";
-import { PARTNER_NOT_CONFIGURED_MESSAGE } from "../utils/graphql.js";
+import { PARTNER_NOT_CONFIGURED_MESSAGE, TENANT_GRAPHQL_NOT_CONFIGURED_MESSAGE } from "../utils/graphql.js";
 
 const originalEnv = process.env;
 let fetchMock: ReturnType<typeof vi.fn>;
@@ -169,5 +169,29 @@ describe("tenantQuery", () => {
 
     expect(fetchMock).toHaveBeenCalledTimes(4);
     expect(requestAuth(3)).toBe("Bearer jwt-fresh");
+  });
+
+  it("with accountId null, calls GraphQL directly with the Product API key -- no JIT mint", async () => {
+    process.env.KNOWBE4_PRODUCT_API_KEY = "product-key";
+    fetchMock.mockResolvedValueOnce(jsonResponse({ data: { users: { nodes: [{ id: 1 }] } } }));
+
+    const data = await tenantQuery<{ users: { nodes: unknown[] } }>(null, "query U { users { nodes { id } } }", {
+      per: 25,
+    });
+
+    expect(data.users.nodes).toHaveLength(1);
+    // Exactly one call -- a JIT mint would make this two, like the accountId=42 case above.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(requestAuth(0)).toBe("Bearer product-key");
+    expect(requestBody(0)).toEqual({ query: "query U { users { nodes { id } } }", variables: { per: 25 } });
+  });
+
+  it("with accountId null and no Product API key configured, throws without calling fetch", async () => {
+    delete process.env.KNOWBE4_PRODUCT_API_KEY;
+
+    await expect(tenantQuery(null, "query U { users { nodes { id } } }")).rejects.toThrow(
+      TENANT_GRAPHQL_NOT_CONFIGURED_MESSAGE
+    );
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

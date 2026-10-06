@@ -74,9 +74,14 @@ function errorResult(message: string): CallToolResult {
   return { content: [{ type: "text", text: message }], isError: true };
 }
 
+/** "account 123" in partner mode, or "the configured tenant" in direct mode (accountId null). */
+function accountScope(accountId: number | null): string {
+  return accountId === null ? "the configured tenant" : `account ${accountId}`;
+}
+
 export async function handle(
   toolName: string,
-  accountId: number,
+  accountId: number | null,
   args: Record<string, unknown>
 ): Promise<CallToolResult> {
   switch (toolName) {
@@ -128,7 +133,7 @@ export async function handle(
       const data = await tenantQuery<{ user: unknown | null }>(accountId, USER_QUERY, { id: userId });
 
       if (!data.user) {
-        return errorResult(`Error: user ${userId} not found in account ${accountId}`);
+        return errorResult(`Error: user ${userId} not found in ${accountScope(accountId)}`);
       }
 
       // MCP Apps: attach the normalized card the ui:// user card renders from.

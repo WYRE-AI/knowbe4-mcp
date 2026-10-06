@@ -96,9 +96,14 @@ function fail(message: string): CallToolResult {
   return { content: [{ type: "text", text: message }], isError: true };
 }
 
+/** "account 123" in partner mode, or "the configured tenant" in direct mode (accountId null). */
+function accountScope(accountId: number | null): string {
+  return accountId === null ? "the configured tenant" : `account ${accountId}`;
+}
+
 export async function handle(
   toolName: string,
-  accountId: number,
+  accountId: number | null,
   args: Record<string, unknown>
 ): Promise<CallToolResult> {
   switch (toolName) {
@@ -137,7 +142,7 @@ export async function handle(
       });
 
       if (!data.phishingCampaign) {
-        return fail(`Error: campaign ${campaignId} not found in account ${accountId}`);
+        return fail(`Error: campaign ${campaignId} not found in ${accountScope(accountId)}`);
       }
       return ok({ campaign: data.phishingCampaign, account_id: accountId });
     }
@@ -199,7 +204,7 @@ export async function handle(
       });
 
       if (!data.phishingCampaignRun) {
-        return fail(`Error: security test ${pstId} not found in account ${accountId}`);
+        return fail(`Error: security test ${pstId} not found in ${accountScope(accountId)}`);
       }
       return ok({ security_test: data.phishingCampaignRun, account_id: accountId });
     }
@@ -244,7 +249,7 @@ export async function handle(
       );
 
       if (!data.phishingCampaignRecipient) {
-        return fail(`Error: recipient ${recipientId} not found in security test ${pstId} in account ${accountId}`);
+        return fail(`Error: recipient ${recipientId} not found in security test ${pstId} in ${accountScope(accountId)}`);
       }
       return ok({ recipient: data.phishingCampaignRecipient, pst_id: pstId, account_id: accountId });
     }

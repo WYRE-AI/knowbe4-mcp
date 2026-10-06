@@ -1,16 +1,27 @@
 /**
- * Partner-mode routing for tenant tools.
+ * GraphQL routing for tenant tools, two independent opt-in modes:
  *
- * Every tenant tool accepts an optional `account_id`. When it is present the
- * call is served over KnowBe4's tenant GraphQL API with a JIT token minted
- * from the partner key (src/graphql/<domain>.ts) instead of the REST
- * Reporting API (src/domains/<domain>.ts). Routing lives here so the REST
- * handlers stay untouched and single-tenant installs behave exactly as before.
+ * - Partner mode: every tenant tool accepts an optional `account_id`. When
+ *   present the call is served over KnowBe4's tenant GraphQL API with a JIT
+ *   token minted from the partner key (src/graphql/<domain>.ts).
+ * - Direct tenant mode: a single tenant with its own Product API key
+ *   (KNOWBE4_PRODUCT_API_KEY) can opt into the same GraphQL handlers without
+ *   `account_id` and without a partner key -- the key is already scoped to
+ *   that one tenant, so there is nothing to mint. See callViaDirectTenantGraphql.
+ *
+ * Without `account_id` and without a configured Product API key, the REST
+ * Reporting API (src/domains/<domain>.ts) is used, unchanged. Routing lives
+ * here so the REST handlers stay untouched and single-tenant installs that
+ * opt into neither behave exactly as before.
  */
 
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import type { CallToolResult, DomainName } from "../utils/types.js";
-import { getPartnerCredentials, PARTNER_NOT_CONFIGURED_MESSAGE } from "../utils/graphql.js";
+import {
+  getPartnerCredentials,
+  getTenantGraphqlCredentials,
+  PARTNER_NOT_CONFIGURED_MESSAGE,
+} from "../utils/graphql.js";
 import { findDomainForTool } from "../utils/categories.js";
 import * as account from "./account.js";
 import * as users from "./users.js";
@@ -21,7 +32,7 @@ import * as reporting from "./reporting.js";
 
 export type TenantToolHandler = (
   toolName: string,
-  accountId: number,
+  accountId: number | null,
   args: Record<string, unknown>
 ) => Promise<CallToolResult>;
 
@@ -84,4 +95,35 @@ export async function callViaPartner(
 
   const { account_id: accountId, ...tenantArgs } = args;
   return handler(toolName, accountId as number, tenantArgs);
+}
+
+/**
+ * True when `domain` is one of the tenant domains servable over GraphQL
+ * (i.e. not `partner`, which has no REST equivalent to opt out of) AND a
+ * Product API key is configured. Checked by callers BEFORE calling
+ * callViaDirectTenantGraphql so an unconfigured/ineligible domain falls
+ * through to the REST path exactly as it did before this mode existed --
+ * this function never itself returns an error result.
+ */
+export function shouldUseDirectTenantGraphql(domain: DomainName | null): boolean {
+  return domain !== null && domain in TENANT_HANDLERS && getTenantGraphqlCredentials() !== null;
+}
+
+/**
+ * Serve a tenant tool over GraphQL using the caller's own Product API key
+ * (opt-in, no `account_id`, no partner key). Callers should check
+ * shouldUseDirectTenantGraphql(domain) first; this throws via the handler's
+ * own credential check if called without one configured, same as the REST
+ * path throws without KNOWBE4_API_KEY.
+ */
+export async function callViaDirectTenantGraphql(
+  toolName: string,
+  args: Record<string, unknown>
+): Promise<CallToolResult> {
+  const domain = findDomainForTool(toolName);
+  const handler = domain ? TENANT_HANDLERS[domain] : undefined;
+  if (!handler) {
+    return errorResult(`Error: ${toolName} is not available over the opt-in tenant GraphQL path`);
+  }
+  return handler(toolName, null, args);
 }

@@ -158,13 +158,14 @@ function error(message: string): CallToolResult {
   return { content: [{ type: "text", text: `Error: ${message}` }], isError: true };
 }
 
-function notFound(thing: string, id: number, accountId: number): CallToolResult {
-  return error(`${thing} ${id} not found in account ${accountId}`);
+function notFound(thing: string, id: number, accountId: number | null): CallToolResult {
+  const scope = accountId === null ? "the configured tenant" : `account ${accountId}`;
+  return error(`${thing} ${id} not found in ${scope}`);
 }
 
 export async function handle(
   toolName: string,
-  accountId: number,
+  accountId: number | null,
   args: Record<string, unknown>
 ): Promise<CallToolResult> {
   switch (toolName) {

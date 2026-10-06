@@ -10,7 +10,7 @@
  */
 
 import { createHash } from "node:crypto";
-import { graphqlRequest, requirePartnerCredentials } from "./graphql.js";
+import { graphqlRequest, requirePartnerCredentials, requireTenantGraphqlCredentials } from "./graphql.js";
 import { logger } from "./logger.js";
 import type { PartnerCredentials } from "./types.js";
 
@@ -95,15 +95,24 @@ export async function getJitToken(accountId: number, now: () => number = Date.no
 }
 
 /**
- * Run a tenant-level GraphQL operation against a managed account using a JIT
- * token. An authentication failure evicts the cached token so the next call
- * mints a fresh one.
+ * Run a tenant-level GraphQL operation. `accountId` is a managed account's
+ * id in partner mode (a JIT token is minted/cached for it via the partner
+ * key); pass `null` for the opt-in direct-tenant-key mode, which calls
+ * GraphQL with a Product API key already scoped to the caller's own tenant
+ * -- no JIT minting needed or possible, since there is no partner key to
+ * mint from. An authentication failure in partner mode evicts the cached
+ * token so the next call mints a fresh one; direct mode has no cache to evict.
  */
 export async function tenantQuery<T>(
-  accountId: number,
+  accountId: number | null,
   query: string,
   variables?: Record<string, unknown>
 ): Promise<T> {
+  if (accountId === null) {
+    const creds = requireTenantGraphqlCredentials();
+    return await graphqlRequest<T>(creds.graphqlUrl, creds.apiKey, query, variables);
+  }
+
   const creds = requirePartnerCredentials();
   const token = await getJitToken(accountId);
   try {

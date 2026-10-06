@@ -13,14 +13,23 @@
  * - http: For hosted deployment with optional gateway auth
  *
  * Auth modes:
- * - env (default): Credentials from KNOWBE4_API_KEY (tenant, REST) and/or
- *   KNOWBE4_PARTNER_API_KEY (partner, GraphQL) environment variables
+ * - env (default): Credentials from KNOWBE4_API_KEY (tenant, REST),
+ *   KNOWBE4_PARTNER_API_KEY (partner, GraphQL), and/or
+ *   KNOWBE4_PRODUCT_API_KEY (opt-in tenant GraphQL) environment variables
  * - gateway: Credentials injected from request headers by the MCP gateway
- *   - Headers: X-KnowBe4-API-Key (tenant), X-KnowBe4-Partner-API-Key (partner)
+ *   - Headers: X-KnowBe4-API-Key (tenant), X-KnowBe4-Partner-API-Key (partner),
+ *     X-KnowBe4-Product-API-Key (opt-in tenant GraphQL)
  *
  * Partner mode: every tenant tool accepts an optional `account_id`. When set,
  * the call is served over the tenant GraphQL API with a JIT token minted from
- * the partner key (see src/graphql/). Without it, the REST path is used.
+ * the partner key (see src/graphql/). Without it, the REST path is used --
+ * unless opt-in tenant GraphQL (below) is configured.
+ *
+ * Opt-in tenant GraphQL: a single tenant with its own KnowBe4 Product API
+ * key (requires Diamond or SAT Advanced) can serve every tenant tool over
+ * GraphQL instead of REST, without `account_id` and without a partner key.
+ * This is non-breaking: REST stays the default, and this mode only activates
+ * when KNOWBE4_PRODUCT_API_KEY (or its gateway header) is explicitly set.
  *
  * Domains:
  * - account: Account info and risk score history
@@ -44,8 +53,14 @@ import type { Tool, CallToolRequest } from "@modelcontextprotocol/sdk/types.js";
 import { getDomainHandler, getAvailableDomains } from "./domains/index.js";
 import { isDomainName, KNOWBE4_REGIONS, type DomainName, type RequestCredentials } from "./utils/types.js";
 import { getCredentials, credentialStore } from "./utils/client.js";
-import { resolveGraphqlUrl, getPartnerCredentials } from "./utils/graphql.js";
-import { isPartnerScoped, callViaPartner, withAccountIdArg } from "./graphql/index.js";
+import { resolveGraphqlUrl, getPartnerCredentials, getTenantGraphqlCredentials } from "./utils/graphql.js";
+import {
+  isPartnerScoped,
+  callViaPartner,
+  withAccountIdArg,
+  shouldUseDirectTenantGraphql,
+  callViaDirectTenantGraphql,
+} from "./graphql/index.js";
 import { logger } from "./utils/logger.js";
 import { setServerRef } from "./utils/server-ref.js";
 import { TOOL_CATEGORIES, findDomainForTool, routeIntent } from "./utils/categories.js";
@@ -326,7 +341,9 @@ const handleCallTool = async (request: CallToolRequest) => {
       const handler = await getDomainHandler(domain);
       const result = isPartnerScoped(toolArgs)
         ? await callViaPartner(toolName, toolArgs)
-        : await handler.handleCall(toolName, toolArgs);
+        : shouldUseDirectTenantGraphql(domain)
+          ? await callViaDirectTenantGraphql(toolName, toolArgs)
+          : await handler.handleCall(toolName, toolArgs);
 
       logger.debug("Meta-tool execute completed", {
         tool: toolName,
@@ -445,12 +462,16 @@ const handleCallTool = async (request: CallToolRequest) => {
       const partnerStatus = partnerCreds
         ? `Configured (endpoint: ${partnerCreds.graphqlUrl}) - tenant tools accept account_id`
         : "Not configured - set KNOWBE4_PARTNER_API_KEY to enable account_id on tenant tools";
+      const tenantGraphqlCreds = getTenantGraphqlCredentials();
+      const tenantGraphqlStatus = tenantGraphqlCreds
+        ? `Configured (endpoint: ${tenantGraphqlCreds.graphqlUrl}) - tenant tools without account_id use GraphQL instead of REST`
+        : "Not configured - set KNOWBE4_PRODUCT_API_KEY to opt this tenant into GraphQL (requires Diamond/SAT Advanced)";
 
       return {
         content: [
           {
             type: "text",
-            text: `KnowBe4 MCP Server Status\n\nTenant credentials (REST): ${credStatus}\nPartner credentials (GraphQL): ${partnerStatus}\nAvailable domains: ${getAvailableDomains().join(", ")}\n\nAll tools are available at all times. Use knowbe4_navigate to discover tools by domain.`,
+            text: `KnowBe4 MCP Server Status\n\nTenant credentials (REST): ${credStatus}\nPartner credentials (GraphQL): ${partnerStatus}\nOpt-in tenant GraphQL: ${tenantGraphqlStatus}\nAvailable domains: ${getAvailableDomains().join(", ")}\n\nAll tools are available at all times. Use knowbe4_navigate to discover tools by domain.`,
           },
         ],
       };
@@ -465,6 +486,9 @@ const handleCallTool = async (request: CallToolRequest) => {
     if (domain) {
       if (isPartnerScoped(toolArgs)) {
         return await callViaPartner(name, toolArgs);
+      }
+      if (shouldUseDirectTenantGraphql(domain)) {
+        return await callViaDirectTenantGraphql(name, toolArgs);
       }
       const handler = await getDomainHandler(domain);
       return await handler.handleCall(name, toolArgs);
@@ -661,20 +685,22 @@ async function startHttpTransport(): Promise<void> {
       }
 
       // Gateway mode: extract credentials from headers. A tenant key, a
-      // partner key, or both may be supplied; at least one is required.
+      // partner key, a product (opt-in tenant GraphQL) key, or any
+      // combination may be supplied; at least one is required.
       if (isGatewayMode) {
         const apiKey = req.headers["x-knowbe4-api-key"] as string | undefined;
         const partnerApiKey = req.headers["x-knowbe4-partner-api-key"] as string | undefined;
+        const productApiKey = req.headers["x-knowbe4-product-api-key"] as string | undefined;
         const region = req.headers["x-knowbe4-region"] as string | undefined;
 
-        if (!apiKey && !partnerApiKey) {
+        if (!apiKey && !partnerApiKey && !productApiKey) {
           res.writeHead(401, { "Content-Type": "application/json" });
           res.end(
             JSON.stringify({
               error: "Missing credentials",
               message:
-                "Gateway mode requires an X-KnowBe4-API-Key header (tenant) and/or an X-KnowBe4-Partner-API-Key header (partner)",
-              required: ["X-KnowBe4-API-Key | X-KnowBe4-Partner-API-Key"],
+                "Gateway mode requires an X-KnowBe4-API-Key header (tenant), an X-KnowBe4-Partner-API-Key header (partner), and/or an X-KnowBe4-Product-API-Key header (opt-in tenant GraphQL)",
+              required: ["X-KnowBe4-API-Key | X-KnowBe4-Partner-API-Key | X-KnowBe4-Product-API-Key"],
               optional: ["X-KnowBe4-Region"],
             })
           );
@@ -689,6 +715,9 @@ async function startHttpTransport(): Promise<void> {
         }
         if (partnerApiKey) {
           scoped.partner = { partnerApiKey, graphqlUrl: resolveGraphqlUrl(regionKey) };
+        }
+        if (productApiKey) {
+          scoped.tenantGraphql = { apiKey: productApiKey, graphqlUrl: resolveGraphqlUrl(regionKey) };
         }
 
         // Build the fresh per-request server + transport INSIDE the credential

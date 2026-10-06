@@ -75,7 +75,7 @@ function fail(message: string): CallToolResult {
 
 export async function handle(
   toolName: string,
-  accountId: number,
+  accountId: number | null,
   args: Record<string, unknown>
 ): Promise<CallToolResult> {
   switch (toolName) {
@@ -105,7 +105,10 @@ export async function handle(
 
       const data = await tenantQuery<{ group: unknown | null }>(accountId, GROUP_QUERY, { id: groupId });
 
-      if (!data.group) return fail(`Error: group ${groupId} not found in account ${accountId}`);
+      if (!data.group) {
+        const scope = accountId === null ? "the configured tenant" : `account ${accountId}`;
+        return fail(`Error: group ${groupId} not found in ${scope}`);
+      }
 
       return ok({ group: data.group, account_id: accountId });
     }
