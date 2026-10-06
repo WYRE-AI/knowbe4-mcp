@@ -21,8 +21,9 @@ Set the following environment variables:
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `KNOWBE4_API_KEY` | One of the two keys | Your KnowBe4 Reporting API key for a single tenant |
-| `KNOWBE4_PARTNER_API_KEY` | One of the two keys | Your KnowBe4 partner Product API key (see [Partner mode](#partner-mode-one-key-for-every-managed-tenant)) |
+| `KNOWBE4_API_KEY` | One of the three keys | Your KnowBe4 Reporting API key for a single tenant |
+| `KNOWBE4_PARTNER_API_KEY` | One of the three keys | Your KnowBe4 partner Product API key (see [Partner mode](#partner-mode-one-key-for-every-managed-tenant)) |
+| `KNOWBE4_PRODUCT_API_KEY` | One of the three keys | Your own tenant's Product API key, to opt into GraphQL instead of REST without partner mode (see [Opt-in tenant GraphQL](#opt-in-tenant-graphql)) |
 | `KNOWBE4_REGION` | No | API region: us, eu, ca, uk, de (default: us). Selects both the REST and GraphQL endpoints |
 | `KNOWBE4_BASE_URL` | No | Custom REST base URL (overrides region) |
 | `KNOWBE4_GRAPHQL_URL` | No | Custom GraphQL endpoint (overrides region) |
@@ -58,6 +59,28 @@ Notes:
 - Partner-mode results use KnowBe4's GraphQL field names (camelCase), so
   they differ in shape from the REST results of the same tool. The
   interactive user card and the user-list filter prompt work in both modes.
+
+## Opt-in tenant GraphQL
+
+A single tenant can serve every tenant tool over GraphQL instead of the REST
+Reporting API, without partner mode and without `account_id`:
+
+1. Set `KNOWBE4_PRODUCT_API_KEY` (or send the `X-KnowBe4-Product-API-Key`
+   header in gateway mode) to your own tenant's Product API key, from
+   Account Settings > API in your KnowBe4 console. This is a different key
+   from the Reporting API key `KNOWBE4_API_KEY` uses.
+2. That's it -- every tenant tool (`account`, `users`, `groups`, `phishing`,
+   `training`, `reporting`) now runs over GraphQL with that key directly. No
+   JIT token is minted; the key is already scoped to your tenant.
+
+This is non-breaking and opt-in: `KNOWBE4_API_KEY`/REST stays the default,
+and nothing changes unless `KNOWBE4_PRODUCT_API_KEY` is explicitly set. The
+tenant GraphQL API requires a Diamond or SAT Advanced subscription -- on a
+lower tier, keep using `KNOWBE4_API_KEY`/REST. Results use GraphQL field
+names (camelCase), same as partner mode, so they differ in shape from REST.
+`account_id` still takes priority if both it and this key are configured
+(use `knowbe4_partner_accounts_list` with a partner key for multi-tenant;
+this mode is for a single tenant serving itself).
 
 ## Usage
 

@@ -18,10 +18,13 @@
 
 import { credentialStore } from "./client.js";
 import { logger } from "./logger.js";
-import { KNOWBE4_GRAPHQL_REGIONS, type PartnerCredentials } from "./types.js";
+import { KNOWBE4_GRAPHQL_REGIONS, type PartnerCredentials, type TenantGraphqlCredentials } from "./types.js";
 
 export const PARTNER_NOT_CONFIGURED_MESSAGE =
   "Partner mode is not configured. Set KNOWBE4_PARTNER_API_KEY (env mode) or send the X-KnowBe4-Partner-API-Key header (gateway mode).";
+
+export const TENANT_GRAPHQL_NOT_CONFIGURED_MESSAGE =
+  "Opt-in tenant GraphQL is not configured. Set KNOWBE4_PRODUCT_API_KEY (env mode) or send the X-KnowBe4-Product-API-Key header (gateway mode). The tenant GraphQL API requires a Diamond or SAT Advanced subscription.";
 
 /**
  * Resolve the GraphQL endpoint for a region, honoring an explicit override.
@@ -57,6 +60,38 @@ export function getPartnerCredentials(): PartnerCredentials | null {
 export function requirePartnerCredentials(): PartnerCredentials {
   const creds = getPartnerCredentials();
   if (!creds) throw new Error(PARTNER_NOT_CONFIGURED_MESSAGE);
+  return creds;
+}
+
+/**
+ * Get opt-in tenant GraphQL credentials (a Product API key, scoped to this
+ * tenant only -- distinct from a partner key, which lists *other* managed
+ * accounts) from the request-scoped store (gateway mode) or environment
+ * variables (stdio/env mode). `KNOWBE4_API_KEY` (Reporting API) is unrelated
+ * and never used here, even if both are set.
+ */
+export function getTenantGraphqlCredentials(): TenantGraphqlCredentials | null {
+  const scoped = credentialStore.getStore();
+  if (scoped) {
+    return scoped.tenantGraphql ?? null;
+  }
+
+  const apiKey = process.env.KNOWBE4_PRODUCT_API_KEY;
+  if (!apiKey) return null;
+
+  return {
+    apiKey,
+    graphqlUrl: resolveGraphqlUrl(process.env.KNOWBE4_REGION, process.env.KNOWBE4_GRAPHQL_URL),
+  };
+}
+
+/**
+ * Opt-in tenant GraphQL credentials, or a clear error telling the caller how
+ * to configure them.
+ */
+export function requireTenantGraphqlCredentials(): TenantGraphqlCredentials {
+  const creds = getTenantGraphqlCredentials();
+  if (!creds) throw new Error(TENANT_GRAPHQL_NOT_CONFIGURED_MESSAGE);
   return creds;
 }
 

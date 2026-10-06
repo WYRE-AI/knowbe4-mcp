@@ -129,7 +129,7 @@ function errorResult(message: string): CallToolResult {
 
 export async function handle(
   toolName: string,
-  accountId: number,
+  accountId: number | null,
   args: Record<string, unknown>
 ): Promise<CallToolResult> {
   switch (toolName) {

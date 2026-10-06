@@ -6,10 +6,13 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import {
   getPartnerCredentials,
   requirePartnerCredentials,
+  getTenantGraphqlCredentials,
+  requireTenantGraphqlCredentials,
   resolveGraphqlUrl,
   graphqlRequest,
   partnerQuery,
   PARTNER_NOT_CONFIGURED_MESSAGE,
+  TENANT_GRAPHQL_NOT_CONFIGURED_MESSAGE,
 } from "../utils/graphql.js";
 import { credentialStore } from "../utils/client.js";
 
@@ -18,6 +21,7 @@ const originalEnv = process.env;
 beforeEach(() => {
   process.env = { ...originalEnv };
   delete process.env.KNOWBE4_PARTNER_API_KEY;
+  delete process.env.KNOWBE4_PRODUCT_API_KEY;
   delete process.env.KNOWBE4_REGION;
   delete process.env.KNOWBE4_GRAPHQL_URL;
 });
@@ -86,6 +90,52 @@ describe("getPartnerCredentials", () => {
 
   it("requirePartnerCredentials throws a configuration hint when unset", () => {
     expect(() => requirePartnerCredentials()).toThrow(PARTNER_NOT_CONFIGURED_MESSAGE);
+  });
+});
+
+describe("getTenantGraphqlCredentials", () => {
+  it("returns null when KNOWBE4_PRODUCT_API_KEY is not set", () => {
+    expect(getTenantGraphqlCredentials()).toBeNull();
+  });
+
+  it("reads the product key and region from env", () => {
+    process.env.KNOWBE4_PRODUCT_API_KEY = "product-key";
+    process.env.KNOWBE4_REGION = "eu";
+    expect(getTenantGraphqlCredentials()).toEqual({
+      apiKey: "product-key",
+      graphqlUrl: "https://eu.knowbe4.com/graphql",
+    });
+  });
+
+  it("honors KNOWBE4_GRAPHQL_URL over the region", () => {
+    process.env.KNOWBE4_PRODUCT_API_KEY = "product-key";
+    process.env.KNOWBE4_REGION = "eu";
+    process.env.KNOWBE4_GRAPHQL_URL = "https://proxy.example/graphql";
+    expect(getTenantGraphqlCredentials()!.graphqlUrl).toBe("https://proxy.example/graphql");
+  });
+
+  it("is independent of KNOWBE4_API_KEY (the unrelated REST credential)", () => {
+    process.env.KNOWBE4_API_KEY = "rest-key";
+    expect(getTenantGraphqlCredentials()).toBeNull();
+  });
+
+  it("never falls back to env inside a request scope that has no product key", () => {
+    process.env.KNOWBE4_PRODUCT_API_KEY = "env-product-key";
+    const inScope = credentialStore.run(
+      { tenant: { apiKey: "tenant-key", baseUrl: "https://us.api.knowbe4.com" } },
+      () => getTenantGraphqlCredentials()
+    );
+    expect(inScope).toBeNull();
+  });
+
+  it("returns the request-scoped tenant GraphQL credentials in gateway mode", () => {
+    const scoped = { apiKey: "gw-product-key", graphqlUrl: "https://ca.knowbe4.com/graphql" };
+    const inScope = credentialStore.run({ tenantGraphql: scoped }, () => getTenantGraphqlCredentials());
+    expect(inScope).toEqual(scoped);
+  });
+
+  it("requireTenantGraphqlCredentials throws a configuration hint when unset", () => {
+    expect(() => requireTenantGraphqlCredentials()).toThrow(TENANT_GRAPHQL_NOT_CONFIGURED_MESSAGE);
   });
 });
 

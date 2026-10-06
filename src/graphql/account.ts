@@ -52,9 +52,10 @@ function positiveInt(value: unknown, fallback: number): number {
   return typeof value === "number" && Number.isFinite(value) && value >= 1 ? Math.floor(value) : fallback;
 }
 
-function noAccountError(accountId: number): CallToolResult {
+function noAccountError(accountId: number | null): CallToolResult {
+  const scope = accountId === null ? "the configured tenant" : `account ${accountId}`;
   return {
-    content: [{ type: "text", text: `Error: account ${accountId} returned no data` }],
+    content: [{ type: "text", text: `Error: ${scope} returned no data` }],
     isError: true,
   };
 }
@@ -65,7 +66,7 @@ function jsonResult(payload: unknown): CallToolResult {
 
 export async function handle(
   toolName: string,
-  accountId: number,
+  accountId: number | null,
   args: Record<string, unknown>
 ): Promise<CallToolResult> {
   switch (toolName) {

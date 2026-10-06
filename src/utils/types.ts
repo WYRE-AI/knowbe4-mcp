@@ -63,12 +63,24 @@ export interface PartnerCredentials {
 }
 
 /**
+ * Opt-in credentials for calling a single tenant's own GraphQL surface
+ * directly with a Product API key (no JIT minting -- the key is already
+ * scoped to that tenant). Distinct from PartnerCredentials, which lists and
+ * queries *other* managed accounts via JIT tokens.
+ */
+export interface TenantGraphqlCredentials {
+  apiKey: string;
+  graphqlUrl: string;
+}
+
+/**
  * Per-request credential bundle held in AsyncLocalStorage in gateway mode.
- * Either half may be absent; a present store never falls back to env vars.
+ * Any combination may be absent; a present store never falls back to env vars.
  */
 export interface RequestCredentials {
   tenant?: KnowBe4Credentials;
   partner?: PartnerCredentials;
+  tenantGraphql?: TenantGraphqlCredentials;
 }
 
 /**
