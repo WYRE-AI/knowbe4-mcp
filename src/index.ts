@@ -842,6 +842,31 @@ export async function startHttpTransport(): Promise<HttpServer> {
 }
 
 /**
+ * Close the HTTP server on SIGINT/SIGTERM.
+ *
+ * The returned promise always settles. A close error is logged and exits 1
+ * so a signal listener cannot surface an unhandled rejection. A successful
+ * close exits 0.
+ */
+export async function shutdownHttpServer(
+  httpServer: HttpServer,
+  exit: (code: number) => void = process.exit,
+): Promise<void> {
+  logger.info("Shutting down KnowBe4 MCP server...");
+  try {
+    await new Promise<void>((resolve, reject) => {
+      httpServer.close((err) => (err ? reject(err) : resolve()));
+    });
+    exit(0);
+  } catch (error) {
+    logger.error("HTTP server close failed", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    exit(1);
+  }
+}
+
+/**
  * Main entry point - select transport based on MCP_TRANSPORT env var
  */
 async function main() {
@@ -854,12 +879,14 @@ async function main() {
 
   if (transportType === "http") {
     const httpServer = await startHttpTransport();
-    const shutdown = async () => {
-      logger.info("Shutting down KnowBe4 MCP server...");
-      await new Promise<void>((resolve, reject) => {
-        httpServer.close((err) => (err ? reject(err) : resolve()));
-      });
-      process.exit(0);
+    let shuttingDown = false;
+    const shutdown = () => {
+      // A second signal would make close() fail with ERR_SERVER_NOT_RUNNING.
+      if (shuttingDown) {
+        return;
+      }
+      shuttingDown = true;
+      void shutdownHttpServer(httpServer);
     };
     process.on("SIGINT", shutdown);
     process.on("SIGTERM", shutdown);
