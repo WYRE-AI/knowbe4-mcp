@@ -15,7 +15,15 @@
  * Auth modes:
  * - env (default): Credentials from KNOWBE4_API_KEY environment variable
  * - gateway: Credentials injected from request headers by the MCP gateway
- *   - Header: X-KnowBe4-API-Key
+ *   - Header: X-KnowBe4-API-Key (X-KnowBe4-Region optional)
+ *   - Missing credential headers are rejected. There is no KNOWBE4_* fallback.
+ *
+ * HTTP transport refuses to start unless CONDUIT_S2S_SECRET is a real secret.
+ * A known placeholder is never accepted. MCP_ALLOW_INSECURE_DEV=1 is a
+ * local-only escape hatch for an empty secret: it logs a warning, skips
+ * X-Gateway-S2S, and listens on 127.0.0.1 only. A configured secret still
+ * honors MCP_HTTP_HOST (default 0.0.0.0). /health and /healthz stay
+ * unauthenticated. stdio does not use S2S auth.
  *
  * Domains:
  * - account: Account info and risk score history
@@ -26,7 +34,7 @@
  * - reporting: Aggregated reports, risk overview, and phishing/training summaries
  */
 
-import { createServer as createHttpServer, IncomingMessage, ServerResponse } from "node:http";
+import { createServer as createHttpServer, type IncomingMessage, type Server as HttpServer, type ServerResponse } from "node:http";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
@@ -44,7 +52,112 @@ import { TOOL_CATEGORIES, findDomainForTool, routeIntent } from "./utils/categor
 import { registerResourceHandlers } from "./resources.js";
 import { verifyS2sHeader, S2S_HEADER } from "./s2s-verify.js";
 
-const S2S_SECRET = process.env.CONDUIT_S2S_SECRET || "";
+/**
+ * Public example values. A copied placeholder must not verify as a real
+ * secret, and it is not bypassed by MCP_ALLOW_INSECURE_DEV.
+ */
+export const KNOWN_PLACEHOLDER_SECRETS = new Set([
+  "replace-with-a-real-secret",
+  "your-s2s-secret",
+  "your-secret",
+  "changeme",
+  "change-me",
+  "placeholder",
+  "secret",
+  "example",
+  "replace-me",
+  "s2s-secret",
+]);
+
+const MISSING_S2S_SECRET_ERROR =
+  "Refusing to start HTTP server: CONDUIT_S2S_SECRET is empty. " +
+  "Set CONDUIT_S2S_SECRET to the gateway-provisioned secret (openssl rand -hex 32), " +
+  "or set MCP_ALLOW_INSECURE_DEV=1 for local development only.";
+
+const PLACEHOLDER_S2S_SECRET_ERROR =
+  "Refusing to start HTTP server: CONDUIT_S2S_SECRET is a known placeholder. " +
+  "Generate a secret with `openssl rand -hex 32` and set CONDUIT_S2S_SECRET to that value.";
+
+const INSECURE_DEV_WARNING =
+  "SECURITY WARNING: CONDUIT_S2S_SECRET is unset and MCP_ALLOW_INSECURE_DEV=1. " +
+  "HTTP /mcp is starting with service-to-service authentication DISABLED, bound to 127.0.0.1 only. " +
+  "Local development only; do not expose this port.";
+
+const LOOPBACK_HOST = "127.0.0.1";
+/** Bind used when a real secret is set and MCP_HTTP_HOST is unset. Container images set 0.0.0.0 explicitly. */
+const SECRET_DEFAULT_HOST = "0.0.0.0";
+
+const S2S_UNAUTHORIZED = {
+  error:
+    "Missing or invalid X-Gateway-S2S header: this endpoint only accepts requests signed by the gateway.",
+};
+
+function exitWithError(message: string): never {
+  console.error(message);
+  process.exit(1);
+}
+
+function headerValue(value: string | string[] | undefined): string | undefined {
+  const raw = Array.isArray(value) ? value[0] : value;
+  if (typeof raw !== "string") return undefined;
+  const trimmed = raw.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+/** 127.0.0.0/8, localhost, and ::1. Bracketed IPv6 forms count too. */
+function isLoopbackHost(host: string): boolean {
+  const normalized = host.trim().toLowerCase().replace(/^\[|\]$/g, "");
+  if (normalized === "localhost" || normalized === "::1") return true;
+  const bare = normalized.startsWith("::ffff:")
+    ? normalized.slice("::ffff:".length)
+    : normalized;
+  const parts = bare.split(".");
+  if (parts.length !== 4) return false;
+  if (parts.some((part) => !/^\d{1,3}$/.test(part) || Number(part) > 255)) return false;
+  return parts[0] === "127";
+}
+
+/**
+ * Fail closed. An empty CONDUIT_S2S_SECRET used to skip X-Gateway-S2S.
+ * Read at HTTP startup, not module load. A known placeholder is refused
+ * even when MCP_ALLOW_INSECURE_DEV=1, so a copied example cannot sign
+ * requests. The secret value is never logged.
+ */
+function resolveHttpS2sSecret(): { secret: string; insecureDev: boolean } {
+  const raw = (process.env.CONDUIT_S2S_SECRET ?? "").trim();
+  if (raw && KNOWN_PLACEHOLDER_SECRETS.has(raw.toLowerCase())) {
+    exitWithError(PLACEHOLDER_S2S_SECRET_ERROR);
+  }
+  if (raw) return { secret: raw, insecureDev: false };
+  if (process.env.MCP_ALLOW_INSECURE_DEV === "1") {
+    console.error("================================================================");
+    console.error(INSECURE_DEV_WARNING);
+    console.error("================================================================");
+    return { secret: "", insecureDev: true };
+  }
+  exitWithError(MISSING_S2S_SECRET_ERROR);
+}
+
+/**
+ * No secret: bind 127.0.0.1 only. A non-loopback MCP_HTTP_HOST refuses to
+ * start and is logged. A real secret honors MCP_HTTP_HOST, including
+ * 0.0.0.0, so container deploys stay on the image bind address.
+ */
+function resolveBindHost(insecureDev: boolean): string {
+  const configured = (process.env.MCP_HTTP_HOST ?? "").trim();
+  if (!insecureDev) return configured || SECRET_DEFAULT_HOST;
+  if (configured === "" || configured === LOOPBACK_HOST) return LOOPBACK_HOST;
+  if (isLoopbackHost(configured)) {
+    console.error(
+      `WARNING: MCP_HTTP_HOST=${configured} is loopback, but MCP_ALLOW_INSECURE_DEV=1 binds ${LOOPBACK_HOST} only.`
+    );
+    return LOOPBACK_HOST;
+  }
+  exitWithError(
+    "Refusing to start HTTP server: MCP_ALLOW_INSECURE_DEV=1 without CONDUIT_S2S_SECRET only binds 127.0.0.1. " +
+      `MCP_HTTP_HOST=${configured} is not loopback. Unset MCP_HTTP_HOST or set it to 127.0.0.1.`
+  );
+}
 
 // Navigation state removed - all tools are always available for direct-install compatibility
 
@@ -558,11 +671,13 @@ async function startStdioTransport(): Promise<void> {
 /**
  * Start the server with HTTP Streamable transport.
  * In gateway mode (AUTH_MODE=gateway), credentials are extracted
- * from the X-KnowBe4-API-Key request header.
+ * from the X-KnowBe4-API-Key request header. A request missing that
+ * header is rejected and does not fall back to KNOWBE4_* in process.env.
  */
-async function startHttpTransport(): Promise<void> {
+export async function startHttpTransport(): Promise<HttpServer> {
+  const { secret: s2sSecret, insecureDev } = resolveHttpS2sSecret();
   const port = parseInt(process.env.MCP_HTTP_PORT || "8080", 10);
-  const host = process.env.MCP_HTTP_HOST || "0.0.0.0";
+  const host = resolveBindHost(insecureDev);
   const isGatewayMode = process.env.AUTH_MODE === "gateway";
 
   /**
@@ -636,19 +751,24 @@ async function startHttpTransport(): Promise<void> {
     // probe would SIGTERM-kill the container.
     if (url.pathname === "/health" || url.pathname === "/healthz") {
       res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ status: "ok" }));
+      res.end(
+        JSON.stringify({
+          status: "ok",
+          authMode: isGatewayMode ? "gateway" : "env",
+        })
+      );
       return;
     }
 
     // MCP endpoint
     if (url.pathname === "/mcp") {
-      if (S2S_SECRET && !verifyS2sHeader(req.headers[S2S_HEADER] as string | undefined, S2S_SECRET)) {
+      // Empty s2sSecret is only reachable when MCP_ALLOW_INSECURE_DEV=1.
+      // A configured secret is always enforced. Placeholder secrets never
+      // reach this point — startup already exited. Rejected before any
+      // credential extraction.
+      if (s2sSecret && !verifyS2sHeader(headerValue(req.headers[S2S_HEADER]), s2sSecret)) {
         res.writeHead(401, { "Content-Type": "application/json" });
-        res.end(
-          JSON.stringify({
-            error: "Missing or invalid X-Gateway-S2S header: this endpoint only accepts requests signed by the gateway.",
-          })
-        );
+        res.end(JSON.stringify(S2S_UNAUTHORIZED));
         return;
       }
 
@@ -665,10 +785,12 @@ async function startHttpTransport(): Promise<void> {
         return;
       }
 
-      // Gateway mode: extract credentials from headers
+      // Gateway mode: credentials must arrive on this request. Falling
+      // through would resolve KNOWBE4_* from the process environment,
+      // which is not request-scoped.
       if (isGatewayMode) {
-        const apiKey = req.headers["x-knowbe4-api-key"] as string | undefined;
-        const region = req.headers["x-knowbe4-region"] as string | undefined;
+        const apiKey = headerValue(req.headers["x-knowbe4-api-key"]);
+        const region = headerValue(req.headers["x-knowbe4-region"]);
 
         if (!apiKey) {
           res.writeHead(401, { "Content-Type": "application/json" });
@@ -716,17 +838,7 @@ async function startHttpTransport(): Promise<void> {
     });
   });
 
-  // Graceful shutdown
-  const shutdown = async () => {
-    logger.info("Shutting down KnowBe4 MCP server...");
-    await new Promise<void>((resolve, reject) => {
-      httpServer.close((err) => (err ? reject(err) : resolve()));
-    });
-    process.exit(0);
-  };
-
-  process.on("SIGINT", shutdown);
-  process.on("SIGTERM", shutdown);
+  return httpServer;
 }
 
 /**
@@ -741,16 +853,29 @@ async function main() {
   });
 
   if (transportType === "http") {
-    await startHttpTransport();
+    const httpServer = await startHttpTransport();
+    const shutdown = async () => {
+      logger.info("Shutting down KnowBe4 MCP server...");
+      await new Promise<void>((resolve, reject) => {
+        httpServer.close((err) => (err ? reject(err) : resolve()));
+      });
+      process.exit(0);
+    };
+    process.on("SIGINT", shutdown);
+    process.on("SIGTERM", shutdown);
   } else {
     await startStdioTransport();
   }
 }
 
-main().catch((error) => {
-  logger.error("Fatal startup error", {
-    error: error instanceof Error ? error.message : String(error),
-    stack: error instanceof Error ? error.stack : undefined,
+// Vitest imports this module to call startHttpTransport. Skip the CLI
+// entrypoint there. `node dist/index.js` still starts stdio or HTTP.
+if (process.env.VITEST !== "true") {
+  main().catch((error) => {
+    logger.error("Fatal startup error", {
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    });
+    process.exit(1);
   });
-  process.exit(1);
-});
+}
