@@ -1,16 +1,22 @@
 services:
+  # Gateway mode. The KnowBe4 API key arrives per request on
+  # X-KnowBe4-API-Key (X-KnowBe4-Region is optional). Do not set
+  # KNOWBE4_API_KEY or env_file here — that would put a static vendor
+  # credential in the container. The project .env is used only for Compose
+  # interpolation of CONDUIT_S2S_SECRET. For AUTH_MODE=env, pass
+  # KNOWBE4_API_KEY on that process instead (see the README).
   mcp:
     build:
       context: .
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"
     environment:
       - MCP_TRANSPORT=http
       - MCP_HTTP_PORT=8080
-      - AUTH_MODE=${AUTH_MODE:-env}
-      - KNOWBE4_API_KEY=${KNOWBE4_API_KEY}
-      - KNOWBE4_REGION=${KNOWBE4_REGION:-us}
+      - MCP_HTTP_HOST=0.0.0.0
+      - AUTH_MODE=gateway
       - LOG_LEVEL=${LOG_LEVEL:-info}
+      - CONDUIT_S2S_SECRET=${CONDUIT_S2S_SECRET:?set CONDUIT_S2S_SECRET}
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/health"]
       interval: 30s
